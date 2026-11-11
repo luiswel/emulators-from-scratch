@@ -1,0 +1,26 @@
+# Conda environment for the emulator lessons.
+#   conda env create -f environment.yml
+#   conda activate emulator
+#
+# The libblas line makes NumPy use Apple's Accelerate library. Without it,
+# NumPy's OpenBLAS and pyfastchem each load their own copy of OpenMP and
+# Python aborts when both are imported. Delete that line on Linux.
+name: emulator
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - matplotlib
+  - h5py
+  - jupyterlab
+  - ipykernel
+  - jupytext
+  - nbconvert
+  - libblas=*=*accelerate
+  - pip
+  - pip:
+      - jax
+      - black[jupyter]
+      - pyfastchem

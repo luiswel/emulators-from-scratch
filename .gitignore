@@ -1,0 +1,15 @@
+# The training grid (464 MB) is not part of the repository
+*.h5
+
+# Written by the notebooks
+runs/fastchem_tables/
+
+# Local working folders
+course_page/
+fastchem_check_report/
+
+# Python and Jupyter clutter
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+.DS_Store
