@@ -2,7 +2,7 @@
 
 A step-by-step course in building a neural-network emulator of FastChem equilibrium chemistry, written at EXOMINTS 2026 by the emulators team. It goes from looking at the training grid, through a network written in plain NumPy with hand-derived gradients, to a JAX emulator that reproduces FastChem with condensation to about 0.02 dex in a fraction of a millisecond.
 
-**Read the course online:** https://luiswel.github.io/emulators-from-scratch/
+**Read the course online:** https://luiswel.github.io/emulators-from-scratch/ (its appendix works through the linear algebra of training, from the transforms to backpropagation in matrix form and Adam).
 
 ## Start here
 

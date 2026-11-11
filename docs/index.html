@@ -285,6 +285,7 @@
       <li><a href="#test"><span class="num">5</span><span>Test it, then use it</span></a></li>
       <li><a href="#recipe"><span class="num">·</span><span>Building your own</span></a></li>
       <li><a href="#notes"><span class="num">·</span><span>Notes on this grid</span></a></li>
+      <li><a href="#maths"><span class="num">A</span><span>The maths of training</span></a></li>
       <li><a href="#glossary"><span class="num">·</span><span>Glossary</span></a></li>
     </ol>
   </nav>
@@ -773,6 +774,81 @@ log10_values = emulator.predict_log10(features)  # features: (n_layers, 6)</code
         <li>FastChem with condensation and the grid's settings takes about 0.1 s per model above 1000 K, about 1 s between 300 and 1000 K and about 3 s below 300 K on one core, whereas gas-phase chemistry alone takes a few milliseconds per model above 300 K. FastChem's default tolerances give the same times. These timings are provisional (see Speed in Step 5).</li>
         <li>The grid is valid only above about 57 K, because every FastChem attempt below that failed.</li>
       </ul>
+    </section>
+
+    <section id="maths">
+      <p class="eyebrow">Appendix</p>
+      <h2>The maths of training, in matrices</h2>
+      <p>This appendix collects the linear algebra behind Steps 1 to 4 for the final network, which has three hidden layers of 256 units. Each piece links to the function in the <code>emulator</code> package that computes it.</p>
+
+      <h3>The transforms</h3>
+      <p>For each input column <i>j</i> the training set gives a minimum <i>l<sub>j</sub></i> and a maximum <i>u<sub>j</sub></i>, and for each output column <i>k</i> the mean <i>μ<sub>k</sub></i> and standard deviation <i>σ<sub>k</sub></i> of the floored log10 values. Model <i>i</i> is then transformed as</p>
+      <div class="eq">
+        <span><i>x</i>′<sub><i>ij</i></sub> = 2 (<i>x<sub>ij</sub></i> − <i>l<sub>j</sub></i>) / (<i>u<sub>j</sub></i> − <i>l<sub>j</sub></i>) − 1</span>
+        <span><i>y</i>′<sub><i>ik</i></sub> = (max(<i>y<sub>ik</sub></i>, −15) − <i>μ<sub>k</sub></i>) / <i>σ<sub>k</sub></i></span>
+      </div>
+      <p>Both are affine maps applied column by column, and fitting them means computing <i>l</i>, <i>u</i>, <i>μ</i> and <i>σ</i> and nothing more (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/data.py#L183"><code>fit_input_transform</code></a>, <a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/data.py#L263"><code>fit_output_transform</code></a>). The inverse, <i>y</i> = <i>σ<sub>k</sub></i> <i>y</i>′ + <i>μ<sub>k</sub></i> followed by the floor, turns network outputs back into log10 mixing ratios (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/data.py#L331"><code>inverse_transform_outputs</code></a>).</p>
+
+      <h3>The forward pass</h3>
+      <div class="eq">
+        <span><i>Z</i><sub>1</sub> = <i>X</i>′<i>W</i><sub>1</sub> + 𝟙<i>b</i><sub>1</sub><sup>T</sup>,&nbsp;&nbsp; <i>A</i><sub>1</sub> = tanh(<i>Z</i><sub>1</sub>)</span>
+        <span><i>Z</i><sub>2</sub> = <i>A</i><sub>1</sub><i>W</i><sub>2</sub> + 𝟙<i>b</i><sub>2</sub><sup>T</sup>,&nbsp;&nbsp; <i>A</i><sub>2</sub> = tanh(<i>Z</i><sub>2</sub>)</span>
+        <span><i>Z</i><sub>3</sub> = <i>A</i><sub>2</sub><i>W</i><sub>3</sub> + 𝟙<i>b</i><sub>3</sub><sup>T</sup>,&nbsp;&nbsp; <i>A</i><sub>3</sub> = tanh(<i>Z</i><sub>3</sub>)</span>
+        <span><i>Ŷ</i> = <i>A</i><sub>3</sub><i>W</i><sub>4</sub> + 𝟙<i>b</i><sub>4</sub><sup>T</sup></span>
+      </div>
+      <p>Here <i>X</i>′ is a batch of <i>B</i> models (<i>B</i> × 6), 𝟙 is a column of <i>B</i> ones so that each bias is added to every row, <i>W</i><sub>1</sub> is 6 × 256, <i>W</i><sub>2</sub> and <i>W</i><sub>3</sub> are 256 × 256, <i>W</i><sub>4</sub> is 256 × 19, and tanh acts element by element. The parameters θ = {<i>W</i><sub>1</sub>, <i>b</i><sub>1</sub>, …, <i>W</i><sub>4</sub>, <i>b</i><sub>4</sub>} hold 138,259 numbers, and a forward pass costs about 275,000 floating-point operations per model (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L58"><code>jax_mlp.forward</code></a>).</p>
+
+      <h3>The loss</h3>
+      <div class="eq"><span><i>L</i>(θ) = (1/19<i>B</i>) Σ<sub><i>i</i></sub> Σ<sub><i>k</i></sub> (<i>Ŷ<sub>ik</sub></i> − <i>Y</i>′<sub><i>ik</i></sub>)² = ‖<i>Ŷ</i> − <i>Y</i>′‖²<sub>F</sub> / 19<i>B</i></span></div>
+      <p>If every standardized output carried independent Gaussian errors of unit variance, −log <i>p</i>(<i>Y</i>′ | θ) would equal (19<i>B</i>/2) <i>L</i>(θ) plus a constant, so minimizing <i>L</i> is maximum-likelihood estimation of θ (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L91"><code>jax_mlp.loss_fn</code></a>).</p>
+
+      <h3>Why the polynomial has a formula and the network does not</h3>
+      <p>The degree-5 polynomial predicts <i>Ŷ</i> = Φ<i>C</i>, where Φ is the <i>N</i> × 462 matrix of monomials of the inputs and <i>C</i> the 462 × 19 matrix of coefficients. The loss is quadratic in <i>C</i>, and setting its gradient to zero gives the normal equations</p>
+      <div class="eq"><span>Φ<sup>T</sup>Φ <i>C</i> = Φ<sup>T</sup><i>Y</i>′</span></div>
+      <p>which <code>numpy.linalg.lstsq</code> solves through the singular value decomposition Φ = <i>U</i>Σ<i>V</i><sup>T</sup>, as <i>C</i> = <i>V</i>Σ<sup>+</sup><i>U</i><sup>T</sup><i>Y</i>′, without forming Φ<sup>T</sup>Φ and squaring its condition number (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/baselines.py#L80"><code>baselines.fit_polynomial</code></a>). The network's output depends on <i>W</i><sub>1</sub>, <i>W</i><sub>2</sub> and <i>W</i><sub>3</sub> through the tanh, so <i>L</i>(θ) is neither quadratic nor convex and has no such formula, and the minimum has to be found by following the gradient downhill.</p>
+
+      <h3>Backpropagation</h3>
+      <p>Take one layer, <i>Z</i> = <i>AW</i> + 𝟙<i>b</i><sup>T</sup>, and write Δ = ∂<i>L</i>/∂<i>Z</i> for the gradient of the loss with respect to the layer's values before the tanh. In index notation <i>Z<sub>ij</sub></i> = Σ<sub><i>k</i></sub> <i>A<sub>ik</sub></i> <i>W<sub>kj</sub></i> + <i>b<sub>j</sub></i>, so the chain rule gives</p>
+      <div class="eq">
+        <span>∂<i>L</i>/∂<i>W<sub>kj</sub></i> = Σ<sub><i>i</i></sub> Δ<sub><i>ij</i></sub> <i>A<sub>ik</sub></i>, which in matrix form is ∂<i>L</i>/∂<i>W</i> = <i>A</i><sup>T</sup>Δ</span>
+        <span>∂<i>L</i>/∂<i>b<sub>j</sub></i> = Σ<sub><i>i</i></sub> Δ<sub><i>ij</i></sub>, the column sums of Δ</span>
+        <span>∂<i>L</i>/∂<i>A<sub>ik</sub></i> = Σ<sub><i>j</i></sub> Δ<sub><i>ij</i></sub> <i>W<sub>kj</sub></i>, which in matrix form is ∂<i>L</i>/∂<i>A</i> = Δ<i>W</i><sup>T</sup></span>
+      </div>
+      <p>The activation <i>A</i> = tanh(<i>Z</i>) acts element by element with derivative 1 − tanh²(<i>Z</i>) = 1 − <i>A</i>², so the gradient passes through it as ∂<i>L</i>/∂<i>Z</i> = (∂<i>L</i>/∂<i>A</i>) ⊙ (1 − <i>A</i>²), where ⊙ is the element-wise product. Starting at the loss and working back through the four layers:</p>
+      <div class="eq">
+        <span>Δ<sub>4</sub> = 2 (<i>Ŷ</i> − <i>Y</i>′) / 19<i>B</i></span>
+        <span>∂<i>L</i>/∂<i>W</i><sub>4</sub> = <i>A</i><sub>3</sub><sup>T</sup>Δ<sub>4</sub>,&nbsp;&nbsp; Δ<sub>3</sub> = (Δ<sub>4</sub><i>W</i><sub>4</sub><sup>T</sup>) ⊙ (1 − <i>A</i><sub>3</sub>²)</span>
+        <span>∂<i>L</i>/∂<i>W</i><sub>3</sub> = <i>A</i><sub>2</sub><sup>T</sup>Δ<sub>3</sub>,&nbsp;&nbsp; Δ<sub>2</sub> = (Δ<sub>3</sub><i>W</i><sub>3</sub><sup>T</sup>) ⊙ (1 − <i>A</i><sub>2</sub>²)</span>
+        <span>∂<i>L</i>/∂<i>W</i><sub>2</sub> = <i>A</i><sub>1</sub><sup>T</sup>Δ<sub>2</sub>,&nbsp;&nbsp; Δ<sub>1</sub> = (Δ<sub>2</sub><i>W</i><sub>2</sub><sup>T</sup>) ⊙ (1 − <i>A</i><sub>1</sub>²)</span>
+        <span>∂<i>L</i>/∂<i>W</i><sub>1</sub> = <i>X</i>′<sup>T</sup>Δ<sub>1</sub></span>
+      </div>
+      <p>Each layer needs two matrix products of the same size as its forward product, so the whole gradient costs about two forward passes, against two forward passes per parameter (276,518 per step) for finite differences. This is reverse-mode differentiation, the efficient direction when one scalar loss depends on many parameters. <a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/numpy_mlp.py#L168"><code>numpy_mlp.backward</code></a> writes these lines out by hand, and <code>jax.grad</code> builds the same products automatically from the forward code.</p>
+
+      <h3>Mini-batches</h3>
+      <p>The loss over the training set is the average of the per-model losses, so the gradient computed on a batch drawn uniformly at random is an unbiased estimate of the full gradient, with a variance that falls as 1/<i>B</i>. Batches of 1,024 models give 195 updates per pass through the 200,000 training models, where the full gradient would give one.</p>
+
+      <h3>Adam</h3>
+      <div class="eq">
+        <span><i>m<sub>t</sub></i> = β<sub>1</sub><i>m</i><sub><i>t</i>−1</sub> + (1 − β<sub>1</sub>) <i>g<sub>t</sub></i>,&nbsp;&nbsp; <i>v<sub>t</sub></i> = β<sub>2</sub><i>v</i><sub><i>t</i>−1</sub> + (1 − β<sub>2</sub>) <i>g<sub>t</sub></i>²</span>
+        <span><i>m̂<sub>t</sub></i> = <i>m<sub>t</sub></i> / (1 − β<sub>1</sub><sup><i>t</i></sup>),&nbsp;&nbsp; <i>v̂<sub>t</sub></i> = <i>v<sub>t</sub></i> / (1 − β<sub>2</sub><sup><i>t</i></sup>)</span>
+        <span>θ<sub><i>t</i></sub> = θ<sub><i>t</i>−1</sub> − η<sub><i>t</i></sub> <i>m̂<sub>t</sub></i> / (√<i>v̂<sub>t</sub></i> + ε)</span>
+      </div>
+      <p>Here <i>g<sub>t</sub></i> is the batch gradient at step <i>t</i>, every operation acts element by element, and β<sub>1</sub> = 0.9, β<sub>2</sub> = 0.999, ε = 10⁻⁸. The moving averages <i>m</i> and <i>v</i> of the gradient and its square remember about 1/(1 − β) steps, 10 and 1,000. Starting both at zero biases them low by a factor 1 − β<sup><i>t</i></sup> in the first steps, which the hats remove. The ratio <i>m̂</i>/√<i>v̂</i> is close to ±1 for a weight whose gradient keeps its sign and smaller for one whose gradient keeps flipping, so each weight moves by at most about η<sub><i>t</i></sub> per step whatever the scale of its gradient (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L145"><code>jax_mlp.adam_update</code></a>). The learning rate follows</p>
+      <div class="eq"><span>η(<i>e</i>) = η<sub>end</sub> + ½ (η<sub>start</sub> − η<sub>end</sub>) [1 + cos(π<i>e</i> / (<i>E</i> − 1))]</span></div>
+      <p>for epoch <i>e</i> out of <i>E</i> = 300, from η<sub>start</sub> = 10⁻³ to η<sub>end</sub> = 10⁻⁵ (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L220"><code>jax_mlp.cosine_learning_rate</code></a>).</p>
+
+      <h3>Initialization</h3>
+      <p>Each weight starts as an independent draw from a normal distribution with mean zero and variance 1/<i>n</i><sub>in</sub>, where <i>n</i><sub>in</sub> is the number of inputs to the layer, and each bias starts at zero (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/numpy_mlp.py#L49"><code>numpy_mlp.init_params</code></a>). A unit computes <i>z</i> = Σ<sub><i>k</i></sub> <i>a<sub>k</sub></i> <i>w<sub>k</sub></i> over <i>n</i><sub>in</sub> inputs, so Var(<i>z</i>) = <i>n</i><sub>in</sub> · (1/<i>n</i><sub>in</sub>) · E[<i>a</i>²] = E[<i>a</i>²], and the signal keeps its size from layer to layer instead of growing or shrinking geometrically with depth.</p>
+
+      <h3>The algorithm</h3>
+      <ol class="steps">
+        <li>Fit the transforms on the training set and apply them to all three sets.</li>
+        <li>Draw the starting weights.</li>
+        <li>For each of 300 epochs, shuffle the training models and cut them into 195 batches of 1,024. For each batch, run the forward pass, the loss, backpropagation and one Adam step with that epoch's learning rate, all inside one compiled function (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L256"><code>jax_mlp.make_train_step</code></a>).</li>
+        <li>After each epoch, compute the loss on the 25,000 validation models and keep the weights if that loss is the lowest so far.</li>
+        <li>Save the kept weights together with the transforms (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L444"><code>jax_mlp.save_emulator</code></a>).</li>
+      </ol>
+      <p>That makes 58,500 Adam steps, about four minutes on a laptop CPU (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L334"><code>jax_mlp.train</code></a>). Gradient descent on a non-convex loss carries no guarantee of reaching the global minimum, which is why the validation and test errors decide whether the emulator is good enough.</p>
     </section>
 
     <section id="glossary">
