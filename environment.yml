@@ -3,8 +3,14 @@
 #   conda activate emulator
 #
 # The libblas line makes NumPy use Apple's Accelerate library. Without it,
-# NumPy's OpenBLAS and pyfastchem each load their own copy of OpenMP and
-# Python aborts when both are imported. Delete that line on Linux.
+# NumPy's OpenBLAS and the pyfastchem wheel each load their own copy of OpenMP
+# and Python aborts when both are imported. Delete that line on Linux.
+#
+# FastChem is only needed for Lesson 5's comparison with fresh FastChem runs.
+# On Apple Silicon the pyfastchem wheel from pip is compiled without
+# optimization and runs 10 to 40 times slower than an -O3 build (same results).
+# The README ("FastChem on a Mac") shows how to replace it with an -O3 build;
+# llvm-openmp and pybind11 below are what that build needs.
 name: emulator
 channels:
   - conda-forge
@@ -19,6 +25,8 @@ dependencies:
   - jupytext
   - nbconvert
   - libblas=*=*accelerate
+  - llvm-openmp
+  - pybind11
   - pip
   - pip:
       - jax

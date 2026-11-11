@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Emulators From Scratch</title>
-<meta name="description" content="A step-by-step course in building a neural-network emulator of FastChem equilibrium chemistry, from the training grid to a trained network in JAX. EXOMINTS 2026 emulators team.">
+<meta name="description" content="A course in building a neural-network emulator of FastChem chemistry by hand: equations, NumPy code and a numerical check for every step. EXOMINTS 2026 emulators team.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
@@ -269,6 +269,22 @@
   @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
   html { scroll-behavior: smooth; }
   section[id], h3[id] { scroll-margin-top: calc(env(safe-area-inset-top, 0px) + 20px); }
+
+  /* Check lines and the training-step diagram */
+  .check { font-size: 14.5px; line-height: 1.6; background: var(--code-bg); border-radius: 8px; padding: 10px 14px; margin: 0 0 1.2em; max-width: 68ch; }
+  .check b { font: 600 11px/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent-ink); margin-right: 10px; }
+  .diagram { overflow-x: auto; margin: 6px 0 0; }
+  .diagram svg { display: block; width: 100%; min-width: 720px; height: auto; }
+  .diagram rect { fill: var(--paper); stroke-width: 1.5; }
+  .diagram .fwd rect { stroke: var(--accent); }
+  .diagram .bwd rect { stroke: var(--warm); }
+  .diagram text { font-family: var(--body); font-size: 12.5px; fill: var(--ink); }
+  .diagram text.shape { font-family: var(--mono); font-size: 11px; fill: var(--muted); }
+  .diagram text.label { font-family: var(--mono); font-size: 11px; letter-spacing: 0.08em; fill: var(--muted); }
+  .diagram .arrow-f { stroke: var(--accent); stroke-width: 1.5; marker-end: url(#arrow-f); }
+  .diagram .arrow-b { stroke: var(--warm); stroke-width: 1.5; marker-end: url(#arrow-b); }
+  .diagram .head-f { fill: var(--accent); }
+  .diagram .head-b { fill: var(--warm); }
 </style>
 </head>
 <body>
@@ -278,14 +294,16 @@
     <ol>
       <li><a href="#build"><span class="num">·</span><span>What you will build</span></a></li>
       <li><a href="#start"><span class="num">·</span><span>Before you start</span></a></li>
-      <li><a href="#data"><span class="num">1</span><span>Look at the data first</span></a></li>
-      <li><a href="#baselines"><span class="num">2</span><span>Simple baselines to beat</span></a></li>
-      <li><a href="#numpy"><span class="num">3</span><span>A network from scratch</span></a></li>
-      <li><a href="#jax"><span class="num">4</span><span>The emulator in JAX</span></a></li>
-      <li><a href="#test"><span class="num">5</span><span>Test it, then use it</span></a></li>
+      <li><a href="#notation"><span class="num">·</span><span>Notation</span></a></li>
+      <li><a href="#data"><span class="num">1</span><span>The data and the transforms</span></a></li>
+      <li><a href="#baselines"><span class="num">2</span><span>Least squares and neighbours</span></a></li>
+      <li><a href="#numpy"><span class="num">3</span><span>A network by hand</span></a></li>
+      <li><a href="#jax"><span class="num">4</span><span>JAX, Adam and training</span></a></li>
+      <li><a href="#use"><span class="num">5</span><span>Using the emulator</span></a></li>
+      <li><a href="#onefile"><span class="num">6</span><span>The whole emulator in one file</span></a></li>
       <li><a href="#recipe"><span class="num">·</span><span>Building your own</span></a></li>
       <li><a href="#notes"><span class="num">·</span><span>Notes on this grid</span></a></li>
-      <li><a href="#maths"><span class="num">A</span><span>The maths of training</span></a></li>
+      <li><a href="#equations"><span class="num">·</span><span>Equations at a glance</span></a></li>
       <li><a href="#glossary"><span class="num">·</span><span>Glossary</span></a></li>
     </ol>
   </nav>
@@ -294,32 +312,32 @@
     <header>
       <p class="eyebrow">EXOMINTS 2026 · Emulators team</p>
       <h1>Emulators From Scratch</h1>
-      <p class="deck">A step-by-step course in building a neural-network emulator of FastChem equilibrium chemistry, from the first look at the training grid to a trained network in JAX.</p>
+      <p class="deck">A course in building a neural-network emulator of FastChem chemistry by hand. Every step is shown as equations, the NumPy code that implements them, and a numerical check, from reading the grid to a trained network and its derivatives.</p>
       <ul class="meta">
         <li>Grid: training_250k.h5, 250,000 FastChem models</li>
-        <li>Code: plain NumPy and JAX</li>
-        <li>Time: about an afternoon</li>
+        <li>Code: plain NumPy, then JAX</li>
+        <li>Time: about a day to work through</li>
       </ul>
     </header>
 
     <section id="build">
       <h2>What you will build</h2>
-      <p>An emulator is a fast function, fitted to examples, that returns what an expensive code would return for the same inputs. Here the expensive code is FastChem with equilibrium condensation, which took between 0.1 and 3 seconds per model in our first tests (provisional timings, see Step 5). The emulator takes the six numbers that define a model (temperature, pressure, metallicity, and the C/O, S/O and N/O ratios) and returns 19 numbers (the log10 mixing ratios of 18 species and the mean molecular weight) in a fraction of a millisecond.</p>
-      <p>The course assumes that someone else provides the training grid, and uses the team's grid of 250,000 FastChem models. It follows five Jupyter notebooks, and each step on this page explains the ideas, shows the key code and figures, and names the notebook where you can run and change it. Everything is written in plain NumPy and JAX, without a machine-learning library hiding the details, so you can read every line that runs.</p>
+      <p>An emulator is a fast function, fitted to examples, that returns what an expensive code would return for the same inputs. Ours takes the six numbers that define a parcel of gas (temperature, pressure, metallicity, and the C/O, S/O and N/O ratios) and returns 19 numbers (the log10 mixing ratios of 18 species and the mean molecular weight), trained on 250,000 FastChem models with equilibrium condensation.</p>
+      <p>The course is five Jupyter notebooks and one Python file. Each step opens up the machinery in three parts: the maths gives the equations with the shape of every array, and the code writes them out in NumPy rather than hiding them in a library call. A check then confirms the result, usually that the hand-written version agrees exactly with the reusable <code>emulator</code> package, or that a gradient agrees with finite differences. By the end you will have written every line an emulator needs, and Step 6 puts all of them in one file that trains with nothing but NumPy.</p>
 
       <figure>
         <div class="chart">
-          <svg viewBox="0 0 720 272" role="img" aria-labelledby="chart-title chart-desc">
+          <svg viewBox="0 0 720 310" role="img" aria-labelledby="chart-title chart-desc">
             <title id="chart-title">Emulator errors compared</title>
-            <desc id="chart-desc">Median and 99th-percentile errors in dex on a logarithmic axis. Training-set mean 9.5 and 15.4. Degree-5 polynomial 0.72 and 3.0. Nearest neighbours 0.29 and 3.0. NumPy network 0.29 and 1.9. JAX network 0.022 and 0.24. A band from 0.1 to 0.5 dex marks typical JWST abundance precision.</desc>
+            <desc id="chart-desc">Median and 99th-percentile errors in dex on a logarithmic axis. Training-set mean 9.5 and 15.4. Degree-5 polynomial 0.72 and 3.0. Nearest neighbours 0.29 and 3.0. NumPy network trained by SGD 0.29 and 1.9. One-file NumPy emulator 0.022 and 0.24. JAX network 0.022 and 0.24. A band from 0.1 to 0.5 dex marks typical JWST abundance precision.</desc>
             <g>
-              <line class="grid" x1="200" y1="34" x2="200" y2="212"/>
-              <line class="grid" x1="325" y1="34" x2="325" y2="212"/>
-              <line class="grid" x1="450" y1="34" x2="450" y2="212"/>
-              <line class="grid" x1="575" y1="34" x2="575" y2="212"/>
-              <line class="grid" x1="700" y1="34" x2="700" y2="212"/>
+              <line class="grid" x1="200" y1="34" x2="200" y2="248"/>
+              <line class="grid" x1="325" y1="34" x2="325" y2="248"/>
+              <line class="grid" x1="450" y1="34" x2="450" y2="248"/>
+              <line class="grid" x1="575" y1="34" x2="575" y2="248"/>
+              <line class="grid" x1="700" y1="34" x2="700" y2="248"/>
             </g>
-            <rect class="band" x="325" y="34" width="87.4" height="178"/>
+            <rect class="band" x="325" y="34" width="87.4" height="214"/>
             <text x="368.7" y="26" text-anchor="middle">JWST precision</text>
             <g>
               <circle class="legend-dot" cx="520" cy="22" r="5"/>
@@ -350,28 +368,35 @@
             </g>
             <g class="other">
               <title>NumPy network, 2 x 64, 20 epochs of SGD: median 0.29 dex, 99th percentile 1.9 dex</title>
-              <text class="row-label" x="186" y="164" text-anchor="end">NumPy network</text>
+              <text class="row-label" x="186" y="164" text-anchor="end">NumPy network, SGD</text>
               <line x1="382.2" y1="160" x2="485.4" y2="160"/>
               <circle class="median" cx="382.2" cy="160" r="5.5"/>
               <circle class="tail" cx="485.4" cy="160" r="5.5"/>
             </g>
             <g class="ours">
+              <title>One-file NumPy emulator, 3 x 256, Adam, test set: median 0.022 dex, 99th percentile 0.24 dex</title>
+              <text class="row-label ours" x="186" y="200" text-anchor="end">One-file NumPy, Adam</text>
+              <line x1="242.6" y1="196" x2="373.2" y2="196"/>
+              <circle class="median" cx="242.6" cy="196" r="5.5"/>
+              <circle class="tail" cx="373.2" cy="196" r="5.5"/>
+            </g>
+            <g class="ours">
               <title>JAX network, 3 x 256, test set: median 0.022 dex, 99th percentile 0.24 dex</title>
-              <text class="row-label ours" x="186" y="200" text-anchor="end">JAX network</text>
-              <line x1="242.8" y1="196" x2="372.5" y2="196"/>
-              <circle class="median" cx="242.8" cy="196" r="5.5"/>
-              <circle class="tail" cx="372.5" cy="196" r="5.5"/>
+              <text class="row-label ours" x="186" y="236" text-anchor="end">JAX network</text>
+              <line x1="242.8" y1="232" x2="372.5" y2="232"/>
+              <circle class="median" cx="242.8" cy="232" r="5.5"/>
+              <circle class="tail" cx="372.5" cy="232" r="5.5"/>
             </g>
             <g>
-              <text class="tick" x="200" y="232" text-anchor="middle">0.01</text>
-              <text class="tick" x="325" y="232" text-anchor="middle">0.1</text>
-              <text class="tick" x="450" y="232" text-anchor="middle">1</text>
-              <text class="tick" x="575" y="232" text-anchor="middle">10</text>
-              <text class="tick" x="700" y="232" text-anchor="middle">100</text>
-              <text class="tick" x="200" y="248" text-anchor="middle">2.3%</text>
-              <text class="tick" x="325" y="248" text-anchor="middle">26%</text>
-              <text class="tick" x="450" y="248" text-anchor="middle">×10</text>
-              <text x="450" y="268" text-anchor="middle">|prediction − truth| in dex (and as a factor in the mixing ratio)</text>
+              <text class="tick" x="200" y="268" text-anchor="middle">0.01</text>
+              <text class="tick" x="325" y="268" text-anchor="middle">0.1</text>
+              <text class="tick" x="450" y="268" text-anchor="middle">1</text>
+              <text class="tick" x="575" y="268" text-anchor="middle">10</text>
+              <text class="tick" x="700" y="268" text-anchor="middle">100</text>
+              <text class="tick" x="200" y="284" text-anchor="middle">2.3%</text>
+              <text class="tick" x="325" y="284" text-anchor="middle">26%</text>
+              <text class="tick" x="450" y="284" text-anchor="middle">×10</text>
+              <text x="450" y="304" text-anchor="middle">|prediction − truth| in dex (and as a factor in the mixing ratio)</text>
             </g>
           </svg>
         </div>
@@ -380,33 +405,32 @@
 
       <div class="table-wrap">
         <table>
-          <thead>
-            <tr><th>Emulator</th><th>Size</th><th>Training</th><th class="num">Median</th><th class="num">99th pct.</th></tr>
-          </thead>
+          <thead><tr><th>Emulator</th><th>Size</th><th>Training</th><th class="num">Median</th><th class="num">99th pct.</th></tr></thead>
           <tbody>
             <tr><td>Training-set mean</td><td>19 numbers</td><td>none</td><td class="num">9.5</td><td class="num">15.4</td></tr>
-            <tr><td>Polynomial, degree 5</td><td>462 terms per output</td><td>5 s</td><td class="num">0.72</td><td class="num">3.0</td></tr>
+            <tr><td>Polynomial, degree 5</td><td>462 terms per output</td><td>one SVD, 6 s</td><td class="num">0.72</td><td class="num">3.0</td></tr>
             <tr><td>Nearest neighbours, k = 8</td><td>the whole training set</td><td>none</td><td class="num">0.29</td><td class="num">3.0</td></tr>
-            <tr><td>NumPy network, 2 × 64</td><td>5,843 weights</td><td>9 s</td><td class="num">0.29</td><td class="num">1.9</td></tr>
-            <tr class="ours"><td>JAX network, 3 × 256</td><td>138,259 weights</td><td>4 min</td><td class="num">0.022</td><td class="num">0.24</td></tr>
+            <tr><td>NumPy network, 2 × 64, SGD (Step 3)</td><td>5,843 weights</td><td>20 epochs, 5 s</td><td class="num">0.29</td><td class="num">1.9</td></tr>
+            <tr class="ours"><td>One-file NumPy emulator, 3 × 256, Adam (Step 6)</td><td>138,259 weights</td><td>300 epochs, 11 min</td><td class="num">0.022</td><td class="num">0.24</td></tr>
+            <tr class="ours"><td>JAX network, 3 × 256, Adam (Step 4)</td><td>138,259 weights</td><td>300 epochs, 4 min</td><td class="num">0.022</td><td class="num">0.24</td></tr>
           </tbody>
         </table>
       </div>
-      <p class="table-note">Errors in dex on the validation set, except the JAX row, which is the final test. Training times on an M1 Max laptop, CPU only.</p>
+      <p class="table-note">Errors in dex: validation set for the first four rows, test set for the last two. Training times on an M1 Max laptop, CPU only.</p>
     </section>
 
     <section id="start">
       <h2>Before you start</h2>
       <ol class="steps">
         <li>
-          <p>Get the code from the <a href="https://github.com/luiswel/emulators-from-scratch">GitHub repository</a>, either as a zip (the green Code button, then Download ZIP) or with git. It holds the five notebooks with their outputs, the <code>emulator</code> package, a trained emulator and the environment file.</p>
+          <p>Get the code from the <a href="https://github.com/luiswel/emulators-from-scratch">GitHub repository</a>, either as a zip (the green Code button, then Download ZIP) or with git. It holds the five notebooks with their outputs, the <code>emulator</code> package, the one-file emulator, a trained emulator and the environment file.</p>
           <div class="code-block">
             <pre><code id="clone-command">git clone https://github.com/luiswel/emulators-from-scratch.git</code></pre>
             <button class="copy" type="button" data-copy="clone-command">Copy</button>
           </div>
         </li>
         <li>
-          <p>Get the training grid from whoever provides it. For this course that is <code>training_250k.h5</code> (464 MB, made with FastChem 4.0.4 by the team's <code>chemem</code> generator), which goes in the top folder of the repository, next to <code>README.md</code>. The repository does not include it. To train on a grid of your own, change <code>data.load_grid</code>, the only function that knows the file layout.</p>
+          <p>Get the training grid from whoever provides it. For this course that is <code>training_250k.h5</code> (464 MB, made with FastChem 4.0.4 by the team's <code>chemem</code> generator), which goes in the top folder of the repository, next to <code>README.md</code>. To train on a grid of your own, change <code>data.load_grid</code>, the only function that knows the file layout.</p>
         </li>
         <li>
           <p>Create the Python environment and open the notebooks:</p>
@@ -418,137 +442,217 @@ cd lessons
 jupyter lab</code></pre>
             <button class="copy" type="button" data-copy="setup-commands">Copy</button>
           </div>
-          <p>On a Mac, the environment file asks for Apple's Accelerate library under NumPy. NumPy's default OpenBLAS and the pyfastchem wheel each bring their own copy of OpenMP, and Python crashes when both load. On Linux, delete the <code>libblas</code> line from <code>environment.yml</code>.</p>
+          <p>On Linux, delete the <code>libblas</code> line from <code>environment.yml</code> first. It selects Apple's Accelerate library, which exists only on macOS and keeps NumPy from loading a second copy of OpenMP next to FastChem's.</p>
+        </li>
+        <li>
+          <p>Only Step 5 runs FastChem, to compare the emulator with fresh calculations. The pyfastchem 4.0.4 wheel that pip installs on Apple Silicon is compiled without optimization and runs 10 to 40 times slower than the same code built with <code>-O3</code>, with identical results. The README's "FastChem on a Mac" section builds it properly in five commands.</p>
         </li>
       </ol>
-
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Notebook</th><th>What it teaches</th><th class="num">Run time</th></tr></thead>
+          <thead><tr><th>File</th><th>What it builds by hand</th><th class="num">Run time</th></tr></thead>
           <tbody>
-            <tr><td><code>01_the_data</code></td><td>the grid, sampling, the floor, transforms, splits</td><td class="num">10 s</td></tr>
-            <tr><td><code>02_baselines</code></td><td>the mean, polynomials, nearest neighbours</td><td class="num">25 s</td></tr>
-            <tr><td><code>03_numpy_network</code></td><td>a network and its gradients written by hand</td><td class="num">35 s</td></tr>
-            <tr><td><code>04_jax_emulator</code></td><td>JAX, Adam, choosing settings, training</td><td class="num">6 min</td></tr>
-            <tr><td><code>05_test_and_use</code></td><td>test errors, speed, atmosphere profiles</td><td class="num">30 s</td></tr>
+            <tr><td><code>lessons/01_the_data</code></td><td>reading the grid, the split, both transforms</td><td class="num">10 s</td></tr>
+            <tr><td><code>lessons/02_baselines</code></td><td>scoring, normal equations, SVD, nearest-neighbour distances</td><td class="num">30 s</td></tr>
+            <tr><td><code>lessons/03_numpy_network</code></td><td>initialization, forward pass, backpropagation, the SGD loop</td><td class="num">35 s</td></tr>
+            <tr><td><code>lessons/04_jax_emulator</code></td><td>vector–Jacobian products, Adam, the JAX training loop</td><td class="num">7 min</td></tr>
+            <tr><td><code>lessons/05_test_and_use</code></td><td>prediction from the saved arrays, the Jacobian</td><td class="num">10 s</td></tr>
+            <tr><td><code>from_scratch/emulator_numpy.py</code></td><td>all of the above in one NumPy file</td><td class="num">20 s</td></tr>
           </tbody>
         </table>
       </div>
       <p class="table-note">Run times on an M1 Max laptop, CPU only. The notebooks already contain their outputs, so you can read each one before running it.</p>
     </section>
 
+    <section id="notation">
+      <h2>Notation</h2>
+      <p>Models are rows and quantities are columns throughout, so a layer multiplies on the right: <i>Z</i> = <i>AW</i>.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Symbol</th><th>Shape</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td><i>N</i>, <i>D</i>, <i>K</i>, <i>B</i></td><td>numbers</td><td>models (250,000), inputs (6), outputs (19), models in a batch</td></tr>
+            <tr><td><i>X</i>, <i>Y</i></td><td><i>N</i> × <i>D</i>, <i>N</i> × <i>K</i></td><td>inputs (log10 features) and outputs (log10 values) of every model</td></tr>
+            <tr><td><i>X</i>′, <i>Y</i>′</td><td>same</td><td>inputs scaled to [−1, 1], outputs standardized</td></tr>
+            <tr><td><i>l</i>, <i>u</i></td><td><i>D</i></td><td>minimum and maximum of each input over the training set</td></tr>
+            <tr><td><i>μ</i>, <i>σ</i>, <i>F</i></td><td><i>K</i>, <i>K</i>, number</td><td>mean and standard deviation of each output over the training set, and the floor</td></tr>
+            <tr><td><i>W</i><sub>ℓ</sub>, <i>b</i><sub>ℓ</sub></td><td><i>n</i><sub>ℓ−1</sub> × <i>n</i><sub>ℓ</sub>, <i>n</i><sub>ℓ</sub></td><td>weights and biases of layer ℓ</td></tr>
+            <tr><td><i>Z</i><sub>ℓ</sub>, <i>A</i><sub>ℓ</sub></td><td><i>B</i> × <i>n</i><sub>ℓ</sub></td><td>a layer's values before and after the tanh</td></tr>
+            <tr><td>Δ<sub>ℓ</sub></td><td><i>B</i> × <i>n</i><sub>ℓ</sub></td><td>∂<i>L</i>/∂<i>Z</i><sub>ℓ</sub>, the gradient flowing back through layer ℓ</td></tr>
+            <tr><td>θ, η</td><td>all weights, number</td><td>the parameters, and the learning rate</td></tr>
+            <tr><td>𝟙</td><td><i>N</i> or <i>B</i></td><td>a column of ones (adds a row vector to every row)</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <section id="data">
       <p class="eyebrow">Step 1 · lessons/01_the_data.ipynb</p>
-      <h2>Look at the data first</h2>
-      <p>Every emulator project starts by looking hard at the training data, because the shapes in it decide how hard the fit will be and which choices matter later.</p>
+      <h2>The data, and the transforms by hand</h2>
 
-      <h3>What is in the grid</h3>
-      <p>The file holds 250,000 FastChem models with condensation on and rainout off, so condensates form where they are stable but each model is a single parcel of gas. Six inputs define each model, all stored as logarithms: log10 T from 57 to 4000 K, log10 P from 10⁻⁶ to 10³ bar, [M/H] from −1 to +2, and log10 of C/O (0.1 to 1.5), S/O and N/O (0.001 to 0.5). The 19 outputs are the log10 mixing ratios of H, H2, H⁻, e⁻, He, H2O, CO, CO2, CH4, C2H2, Fe, TiO, SiO, HCN, NH3, N2, H2S and OH, floored at 10⁻³⁰, and log10 of the mean molecular weight. The file also assigns each model to a training, validation or test set of 200,000, 25,000 and 25,000 models.</p>
-      <pre><code>from emulator import data
+      <h3>The training set is two matrices</h3>
+      <p>Row <i>i</i> of <i>X</i> ∈ ℝ<sup>250000×6</sup> holds the inputs of model <i>i</i>, and row <i>i</i> of <i>Y</i> ∈ ℝ<sup>250000×19</sup> its outputs. An HDF5 file is a container of named arrays, and <code>h5py</code> reads each one into a NumPy array:</p>
+      <pre><code>with h5py.File(GRID_FILE, "r") as file:
+    X = file["features"][:]  # (N, 6): log10 T, log10 P, [M/H], log10 C/O, S/O, N/O
+    log10_vmr = file["log10_vmr"][:].astype(np.float64)  # (N, 18)
+    log10_mu = file["log10_mean_molecular_weight"][:].astype(np.float64)  # (N,)
+    split = file["split"][:]  # (N,): 0 train, 1 validation, 2 test
 
-grid = data.load_grid("../training_250k.h5")
-inputs = grid["inputs"]  # (250000, 6)
-outputs = grid["outputs"]  # (250000, 19)</code></pre>
-      <p>The file's <code>species_names</code> field calls both H and H2 “Hydrogen”, so <code>load_grid</code> reads <code>species_labels</code> instead.</p>
+Y = np.column_stack([log10_vmr, log10_mu])  # (N, 19)</code></pre>
+      <p class="check"><b>Check</b><code>data.load_grid</code> returns the same <i>X</i> and <i>Y</i> (<code>np.array_equal</code> is True for both).</p>
 
+      <h3>What the inputs look like</h3>
       <figure>
         <div class="frame"><img src="figures/inputs_latin_hypercube.png" width="1190" height="593" alt="Six flat histograms, one per input, with dashed lines at the requested ranges. The temperature histogram starts at log10 T of 1.75 instead of the requested 1.6."></div>
         <figcaption>Histograms of the six inputs. Dashed lines mark the ranges requested from the generator.</figcaption>
       </figure>
-      <p>The histograms are flat because a Latin hypercube spreads the models evenly along every axis, giving each model its own value of every input. A regular grid with the same number of models would give each input only about eight distinct values (8⁶ ≈ 262,000). The temperature histogram stops at 57 K instead of the requested 40 K because FastChem failed for every attempt below that, so the emulator is only valid above about 60 K.</p>
-      <p>Even 250,000 models cover six dimensions thinly. A regular grid of that size would have 7.9 points per axis, so neighbouring models sit about 0.23 dex apart in temperature and 1.1 dex apart in pressure, and anything that changes faster than that (a condensation cliff, for example) is seen by only a few models. This is the curse of dimensionality, and filling these gaps sensibly is the emulator's job.</p>
+      <p>The histograms are flat because a Latin hypercube spreads the models evenly along every axis, giving each model its own value of every input. The temperature histogram stops at 57 K instead of 40 K because FastChem failed for every attempt below that, so the emulator is valid only above about 60 K.</p>
+      <p>A regular grid with as many points would have <i>N</i><sup>1/<i>D</i></sup> = 250,000<sup>1/6</sup> = 7.9 points per axis, so neighbouring models sit about 0.23 dex apart in temperature and 1.1 dex apart in pressure, which leaves six dimensions thinly covered. This is the curse of dimensionality, and filling these gaps sensibly is the emulator's job.</p>
 
+      <h3>What the outputs look like</h3>
       <figure>
         <div class="frame"><img src="figures/outputs_and_floor.png" width="1376" height="896" alt="Nineteen histograms of log10 mixing ratio, one per output. Most species show a tall spike at minus 30, the floor."></div>
         <figcaption>Histograms of the 19 outputs. The spikes at −30 are models at the floor.</figcaption>
       </figure>
-      <p>FastChem returns tiny numbers, or zero, for absent species, and the generator raised everything below 10⁻³⁰ to 10⁻³⁰. Nine species sit on this floor in 40 to 64% of the models. The network must therefore output exactly the floor over large regions and climb steeply off it elsewhere, and a network built from smooth functions finds sharp corners hard.</p>
-
+      <p>Nine species sit on the 10⁻³⁰ floor in 40 to 64% of the models, so the network must output exactly the floor over large regions and climb steeply off it elsewhere.</p>
       <figure>
         <div class="frame"><img src="figures/chemistry_vs_temperature.png" width="1013" height="623" alt="Scatter plots of log10 VMR against log10 T for H2O, CH4, CO, NH3, TiO and free electrons, coloured by log10 pressure."></div>
         <figcaption>Six outputs against log10 T for the 4,260 models within 0.15 dex of solar metallicity and 0.1 dex of solar C/O, coloured by log10 P.</figcaption>
       </figure>
-      <p>The plot shows the shapes the network has to learn. CH4 carries the carbon at low temperature and high pressure and CO at high temperature and low pressure, with the switch moving with pressure. H2O falls away where water condenses at the coldest temperatures, and again at the hottest temperatures and lowest pressures, where it breaks apart. TiO drops off a cliff onto the floor where titanium-bearing condensates form, NH3 condenses at the lowest temperatures and gives way to N2 as the temperature rises, and free electrons appear only at high temperature.</p>
-
+      <p>CH4 holds most of the carbon at low temperature and high pressure, and CO at high temperature and low pressure. H2O falls away where water condenses and again where it breaks apart at the hottest, thinnest conditions. TiO drops off a cliff onto the floor where titanium-bearing condensates form, NH3 condenses at the lowest temperatures and gives way to N2 as it warms, and free electrons appear only at high temperature.</p>
       <figure>
         <div class="frame"><img src="figures/inverse_temperature.png" width="870" height="392" alt="TiO and H2O against 1000 over T. H2O falls along straight lines below about 300 K; TiO is compressed into the left tenth of the axis."></div>
         <figcaption>TiO and H2O for the same models against 1000/T.</figcaption>
       </figure>
-      <p>Below a condensation point the gas holds what the vapour pressure allows, and vapour pressures go as exp(−E/kT), so log10 VMR falls along a straight line in 1/T. The H2O cliff that looks curved against log T is straight here. The TiO panel shows the catch: the grid is uniform in log T, so everything hotter than about 800 K is squeezed into the left tenth of the axis. Step 4 tests which input works better.</p>
+      <p>Below a condensation point vapour pressure sets the abundance, and vapour pressures go as exp(−<i>E</i>/<i>kT</i>), so log10 VMR falls along straight lines in 1/T (H2O). The TiO panel shows the catch: the grid is uniform in log T, so everything hotter than about 800 K is squeezed into a tenth of the 1/T axis. Step 4 tests which input works better.</p>
 
-      <h3>Transform inputs and outputs</h3>
-      <p>The network never sees these numbers directly. Each input is mapped onto [−1, 1] and each output is standardized:</p>
+      <h3>Splitting is indexing</h3>
+      <pre><code>train = np.flatnonzero(split == 0)  # 200,000 row numbers
+val = np.flatnonzero(split == 1)  # 25,000
+test = np.flatnonzero(split == 2)  # 25,000</code></pre>
+      <p>The training set fits the weights, the validation set guides every choice, and the test set is opened once at the end. <code>X[train]</code> is the submatrix of training rows.</p>
+
+      <h3>The input transform</h3>
       <div class="eq">
-        <span><i>x</i>′ = 2 (<i>x</i> − <i>x</i><sub>min</sub>) / (<i>x</i><sub>max</sub> − <i>x</i><sub>min</sub>) − 1</span>
-        <span><i>y</i>′ = (<i>y</i> − <i>ȳ</i>) / <i>σ<sub>y</sub></i></span>
+        <span><i>l<sub>j</sub></i> = min<sub><i>i</i>∈train</sub> <i>X<sub>ij</sub></i>,&nbsp;&nbsp; <i>u<sub>j</sub></i> = max<sub><i>i</i>∈train</sub> <i>X<sub>ij</sub></i>,&nbsp;&nbsp; <i>X</i>′<sub><i>ij</i></sub> = 2 (<i>X<sub>ij</sub></i> − <i>l<sub>j</sub></i>) / (<i>u<sub>j</sub></i> − <i>l<sub>j</sub></i>) − 1</span>
+        <span>in matrix form: <i>X</i>′ = <i>X D</i> + 𝟙<i>c</i><sup>T</sup>,&nbsp;&nbsp; <i>D</i> = diag(2/(<i>u<sub>j</sub></i> − <i>l<sub>j</sub></i>)),&nbsp;&nbsp; <i>c<sub>j</sub></i> = −(<i>u<sub>j</sub></i> + <i>l<sub>j</sub></i>)/(<i>u<sub>j</sub></i> − <i>l<sub>j</sub></i>)</span>
       </div>
-      <p>The first layer of a network adds up weighted inputs, starting from random weights of similar size, so an input spanning nine units would otherwise drown one spanning one unit. After scaling, any value outside [−1, 1] also flags a point outside the training range. Standardizing the outputs puts all 19 on an equal footing in the loss, whereas without it TiO (spread of 9.3 dex) would dominate and the mean molecular weight (spread of 0.09 dex) would be ignored. Both transforms are fitted on the training set only and saved with the network weights, because they are part of the emulator.</p>
-      <pre><code>indices = data.split_from_labels(grid["split"])
-train, val = indices["train"], indices["val"]
+      <p>An affine map, column by column. In NumPy, subtracting a (6,) vector from an (<i>N</i>, 6) array subtracts it from every row, which is the 𝟙<i>c</i><sup>T</sup> term.</p>
+      <pre><code>lower = X[train].min(axis=0)  # l, (6,)
+upper = X[train].max(axis=0)  # u, (6,)
+X_scaled = 2.0 * (X - lower) / (upper - lower) - 1.0  # (N, 6)
 
-input_transform = data.fit_input_transform(inputs[train])
-output_transform = data.fit_output_transform(outputs[train], log10_floor=-15.0)
+d = 2.0 / (upper - lower)  # the same map as X D + 1 c^T
+c = -(upper + lower) / (upper - lower)
+X_scaled_matrix = X @ np.diag(d) + c</code></pre>
+      <p class="check"><b>Check</b>The two forms differ by at most 8.9 × 10⁻¹⁶, and <code>data.transform_inputs</code> gives exactly the same array (largest difference 0.0). The training rows now run from −1 to +1 in every column.</p>
+      <p>Scaling matters because the first layer adds up weighted inputs that start from random weights of similar size, so an input spanning nine units would drown one spanning one. Step 2 shows a numerical reason as well. After scaling, any value outside [−1, 1] flags a point outside the training range.</p>
 
-x_train = data.transform_inputs(inputs[train], input_transform)
-y_train = data.transform_outputs(outputs[train], output_transform)</code></pre>
-      <p>The training set fits the weights, the validation set guides every choice (network size, learning rate, when to stop), and the test set is opened once, at the end, to report the final error. Using the split stored in the file means everyone's test numbers can be compared directly.</p>
+      <h3>The output transform</h3>
+      <div class="eq">
+        <span><i>Ỹ<sub>ik</sub></i> = max(<i>Y<sub>ik</sub></i>, <i>F</i>),&nbsp;&nbsp; <i>μ<sub>k</sub></i> = mean<sub><i>i</i>∈train</sub> <i>Ỹ<sub>ik</sub></i>,&nbsp;&nbsp; <i>σ<sub>k</sub></i>² = mean<sub><i>i</i>∈train</sub> (<i>Ỹ<sub>ik</sub></i> − <i>μ<sub>k</sub></i>)²</span>
+        <span><i>Y</i>′<sub><i>ik</i></sub> = (<i>Ỹ<sub>ik</sub></i> − <i>μ<sub>k</sub></i>) / <i>σ<sub>k</sub></i>,&nbsp;&nbsp; and back: <i>Y<sub>ik</sub></i> = max(<i>σ<sub>k</sub></i> <i>Y</i>′<sub><i>ik</i></sub> + <i>μ<sub>k</sub></i>, <i>F</i>)</span>
+      </div>
+      <pre><code>FLOOR = -30.0  # the grid's own floor; Step 4 raises it to -15
+Y_floored = np.maximum(Y, FLOOR)  # (N, 19)
+mean = Y_floored[train].mean(axis=0)  # mu, (19,)
+std = Y_floored[train].std(axis=0)  # sigma, (19,)
+Y_scaled = (Y_floored - mean) / std  # (N, 19)
+Y_back = np.maximum(Y_scaled * std + mean, FLOOR)  # undo it</code></pre>
+      <p class="check"><b>Check</b>The round trip returns <i>Y</i> to 7 × 10⁻¹⁵ dex, every training column has mean 0 and standard deviation 1, and <code>data.transform_outputs</code> gives exactly the same array.</p>
+      <p>Standardizing puts the 19 outputs on an equal footing in the loss. Without it TiO (spread 9.3 dex) would dominate and the mean molecular weight (spread 0.09 dex) would be ignored. Both transforms use only the training rows, so nothing about the validation or test models leaks into the emulator. From Step 2 on, the lessons call <code>data.fit_input_transform</code> and <code>data.fit_output_transform</code>, which do exactly this.</p>
 
       <div class="exercises">
         <h3>Exercises</h3>
         <ol>
+          <li>Write the inverse of the input transform (from <i>X</i>′ back to <i>X</i>) and check it on the test rows.</li>
+          <li>Recompute <code>mean</code> and <code>std</code> from all 250,000 models. How large are the differences, and why would they matter for an honest test?</li>
           <li>Plot H2S and HCN against temperature for the near-solar slice. Where does each one reach the floor?</li>
-          <li>Repeat the slice at [M/H] = +2. How do the transitions move?</li>
-          <li>What fraction of the training models are colder than 100 K, and is that enough to learn the NH3 cliff?</li>
         </ol>
       </div>
     </section>
 
     <section id="baselines">
       <p class="eyebrow">Step 2 · lessons/02_baselines.ipynb</p>
-      <h2>Simple baselines to beat</h2>
-      <p>Before building a network, find out what simple methods achieve. They show what a good error looks like for this data, and if a polynomial did as well as a network you would not need the network.</p>
+      <h2>Least squares and nearest neighbours</h2>
+      <p>Simple methods set the bar a network must clear, and they are the cleanest place to see the linear algebra the network generalizes.</p>
 
-      <h3>How we score an emulator</h3>
-      <p>For each output we take |prediction − truth| in dex over the validation models, then the median (the typical error) and the 99th percentile (the bad cases), and average each over the 19 outputs. A model counts for a species only where the true or the predicted mixing ratio exceeds 10⁻¹², since no spectrum can tell values apart below that, and taking the larger of the two catches both a missed species and an invented one.</p>
+      <h3>Scoring an emulator in dex</h3>
+      <p>For output <i>k</i> and validation model <i>i</i>, the error is <i>e<sub>ik</sub></i> = |<i>ŷ<sub>ik</sub></i> − <i>y<sub>ik</sub></i>| in dex, counted only where the true or predicted value exceeds −12, since no spectrum can tell abundances below 10⁻¹² apart. Taking the larger of the two catches both a missed species and an invented one. The score is the median and the 99th percentile of the counted errors for each output, averaged over the 19 outputs.</p>
+      <pre><code>abs_error = np.abs(log10_pred - y_val_log10)  # (25000, 19)
+counts = np.maximum(log10_pred, y_val_log10) &gt; -12.0  # (25000, 19), True or False
+medians = [np.median(abs_error[counts[:, k], k]) for k in range(19)]
+p99s = [np.percentile(abs_error[counts[:, k], k], 99) for k in range(19)]
+score = np.mean(medians), np.mean(p99s)</code></pre>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Error in dex</th><th class="num">0.001</th><th class="num">0.01</th><th class="num">0.1</th><th class="num">1</th></tr></thead>
           <tbody><tr><td>Error in the mixing ratio</td><td class="num">0.2%</td><td class="num">2.3%</td><td class="num">26%</td><td class="num">×10</td></tr></tbody>
         </table>
       </div>
-      <p>Predicting the training-set mean for every model gives a median error of 9.5 dex, which sets the scale of the problem.</p>
+      <p>The simplest predictor is the training mean. Each standardized output has mean zero, so this predicts <i>Ŷ</i>′ = 0, which becomes <i>Ŷ</i> = 𝟙<i>μ</i><sup>T</sup> after the inverse transform, and scores 9.5 dex: the scale of the problem.</p>
 
-      <h3>Polynomials</h3>
-      <p>A polynomial of degree <i>d</i> in six inputs is a weighted sum of every product of inputs up to total degree <i>d</i>. The weights enter linearly, so the least-squares solution is exact, with no iterations and no learning rate. The number of terms grows quickly with the degree: 7, 28, 84, 210 and 462 for degrees 1 to 5.</p>
-      <pre><code>from emulator import baselines, evaluate
+      <h3>Linear regression is a linear system</h3>
+      <p>Put a column of ones (the intercept) next to the scaled inputs to form the design matrix Φ, and predict all 19 outputs at once with a coefficient matrix <i>C</i>. The loss is the squared Frobenius norm of the residuals, and setting its gradient to zero gives the <b>normal equations</b>:</p>
+      <div class="eq">
+        <span>Φ = [ 𝟙&nbsp; <i>X</i>′ ] (<i>N</i> × 7),&nbsp;&nbsp; <i>Ŷ</i>′ = Φ<i>C</i>,&nbsp;&nbsp; <i>L</i>(<i>C</i>) = ‖Φ<i>C</i> − <i>Y</i>′‖<sub>F</sub>²</span>
+        <span>∇<sub><i>C</i></sub><i>L</i> = 2 Φ<sup>T</sup>(Φ<i>C</i> − <i>Y</i>′) = 0&nbsp;&nbsp; ⟹&nbsp;&nbsp; Φ<sup>T</sup>Φ <i>C</i> = Φ<sup>T</sup><i>Y</i>′</span>
+      </div>
+      <pre><code>Phi = np.column_stack([np.ones(len(x_train)), x_train])  # (200000, 7)
+A = Phi.T @ Phi  # (7, 7)
+rhs = Phi.T @ y_train  # (7, 19)
+C = np.linalg.solve(A, rhs)  # (7, 19): the best linear model, in one solve</code></pre>
+      <p class="check"><b>Check</b><code>np.linalg.lstsq</code> gives the same coefficients to 3 × 10⁻¹⁴. The condition number, which measures how much a linear system amplifies rounding errors, is κ(Φ) = 1.74 and κ(Φ<sup>T</sup>Φ) = 3.02 = κ(Φ)², because forming Φ<sup>T</sup>Φ squares it.</p>
 
-coefficients = baselines.fit_polynomial(x_train, y_train, degree=5)
-y_pred = baselines.predict_polynomial(x_val, coefficients, degree=5)
-log10_pred = data.inverse_transform_outputs(y_pred, output_transform)
-print(evaluate.summary_errors(outputs[val], log10_pred))</code></pre>
+      <h3>Polynomials: more columns, same algebra, solved with the SVD</h3>
+      <p>A polynomial of degree <i>d</i> is still linear in its coefficients. Its design matrix has one column per monomial <i>x</i>′<sub>1</sub><sup><i>p</i>₁</sup>⋯<i>x</i>′<sub>6</sub><sup><i>p</i>₆</sup> with <i>p</i>₁ + … + <i>p</i>₆ ≤ <i>d</i>, which gives (6+<i>d</i> choose <i>d</i>) columns: 7, 28, 84, 210 and 462 for degrees 1 to 5. Each column is a product of input columns, element by element:</p>
+      <pre><code>monomials = [()]  # tuples of column numbers: (0, 3) means x0 * x3
+for order in (1, 2):
+    monomials += list(combinations_with_replacement(range(6), order))  # 28 for degree 2
+Phi2 = np.ones((len(x_train), len(monomials)))
+for column, monomial in enumerate(monomials):
+    for index in monomial:
+        Phi2[:, column] *= x_train[:, index]</code></pre>
+      <p>For higher degrees we solve with the <b>singular value decomposition</b> Φ = <i>U</i>Σ<i>V</i><sup>T</sup> (orthonormal columns in <i>U</i>, singular values <i>s</i> on the diagonal of Σ, orthogonal <i>V</i>), which never forms Φ<sup>T</sup>Φ:</p>
+      <div class="eq"><span><i>C</i> = <i>V</i> Σ<sup>−1</sup> <i>U</i><sup>T</sup> <i>Y</i>′</span></div>
+      <pre><code>Phi5 = baselines.polynomial_features(x_train, 5)  # (200000, 462)
+U, s, Vt = np.linalg.svd(Phi5, full_matrices=False)  # U (200000, 462), s (462,), Vt (462, 462)
+C5 = Vt.T @ ((U.T @ y_train) / s[:, None])  # (462, 19)</code></pre>
+      <p class="check"><b>Check</b>The hand-built degree-2 matrix equals <code>baselines.polynomial_features</code>, and the SVD solution matches <code>lstsq</code> to 9 × 10⁻¹⁴ (6 s). With scaled inputs κ(Φ) = 69. Built from the raw inputs, where (log P)⁵ reaches −7,776, κ = 3.7 × 10⁷, and the normal equations would face κ² ≈ 10¹⁵, losing 15 of the 16 significant digits of a float64 number. Scaling the inputs is a numerical necessity for least squares, not only a help for the network.</p>
       <figure>
-        <div class="frame"><img src="figures/polynomial_degree.png" width="990" height="350" alt="Two panels of error against polynomial degree from 1 to 5. Training and validation curves overlap and fall from about 3.4 to 0.7 dex (median) and 8 to 3 dex (99th percentile)."></div>
+        <div class="frame"><img src="figures/polynomial_degree.png" width="990" height="350" alt="Error against polynomial degree from 1 to 5. Training and validation curves overlap and fall from about 3.4 to 0.7 dex (median) and 8 to 3 dex (99th percentile)."></div>
         <figcaption>Median and 99th-percentile error against polynomial degree, for the training and validation sets.</figcaption>
       </figure>
-      <p>Training and validation errors are nearly identical, so the polynomial cannot memorize 200,000 models with a few hundred coefficients. Its error comes from limited flexibility, which is called underfitting, while overfitting would show as a training error well below the validation error. The gains also shrink with each degree, because a polynomial is global: to bend sharply at a condensation cliff it has to wiggle everywhere else.</p>
+      <p>Training and validation errors are nearly identical, so the polynomial is limited by its flexibility (underfitting), and each extra degree helps less. A polynomial is global: to bend at a condensation cliff it has to wiggle everywhere else.</p>
       <figure>
-        <div class="frame"><img src="figures/polynomial_tio.png" width="1090" height="370" alt="Left: TiO against log10 T for FastChem and for the degree-5 polynomial. Right: the difference, which swings between about minus 5 and plus 5 dex around the TiO cliff near log10 T of 3."></div>
+        <div class="frame"><img src="figures/polynomial_tio.png" width="1090" height="370" alt="Left: TiO against log10 T for FastChem and for the degree-5 polynomial. Right: the difference, which swings between about minus 5 and plus 5 dex around the TiO cliff."></div>
         <figcaption>TiO in the validation set against log10 T: FastChem and the degree-5 polynomial (left), and their difference (right).</figcaption>
       </figure>
 
-      <h3>Nearest neighbours</h3>
-      <p>Nearest neighbours takes the opposite approach. There is no global formula, and each prediction is an average of the eight training models closest to the requested point, weighted by 1/distance. This is close to interpolating in a precomputed table, which is how most retrieval codes handle equilibrium chemistry today. It reaches a median error of 0.29 dex without fitting anything, and the question is how fast that improves with more models.</p>
+      <h3>Nearest neighbours: distances as one matrix product</h3>
+      <p>Nearest neighbours has no formula: a prediction is the average of the <i>k</i> = 8 training models closest to the requested point, weighted by 1/distance, close to what interpolating in a precomputed table does. The work is the distances. Expanding the square, all squared distances between <i>M</i> queries <i>Q</i> and the training points come from one matrix product:</p>
+      <div class="eq">
+        <span>‖<i>q</i> − <i>x</i>‖² = ‖<i>q</i>‖² − 2 <i>q</i>·<i>x</i> + ‖<i>x</i>‖²&nbsp;&nbsp; ⟹&nbsp;&nbsp; <i>D</i>² = <b>q</b>²𝟙<sup>T</sup> − 2 <i>Q X</i>′<sup>T</sup> + 𝟙(<b>x</b>²)<sup>T</sup>&nbsp;&nbsp; (<i>M</i> × <i>N</i>)</span>
+      </div>
+      <pre><code>Q = x_val[:200]  # (200, 6)
+D2 = (Q**2).sum(axis=1)[:, None] - 2.0 * Q @ x_train.T + (x_train**2).sum(axis=1)[None, :]  # (200, 200000)
+nearest = np.argpartition(D2, 8, axis=1)[:, :8]  # (200, 8)
+distance = np.sqrt(np.maximum(np.take_along_axis(D2, nearest, axis=1), 0.0))
+weights = 1.0 / np.maximum(distance, 1e-12)
+weights /= weights.sum(axis=1, keepdims=True)
+y_pred = np.einsum("qj,qjo-&gt;qo", weights, y_train[nearest])  # (200, 19)</code></pre>
+      <p class="check"><b>Check</b>The package's k-d tree version gives the same predictions to 6 × 10⁻¹⁵. Brute force needs <i>M</i> × <i>N</i> distances (5 × 10⁹ and 40 GB for all 25,000 validation models), whereas a k-d tree splits the training points into nested boxes so each query only looks inside a few nearby boxes.</p>
       <figure>
-        <div class="frame narrow"><img src="figures/neighbours_learning_curve.png" width="532" height="364" alt="Median error of nearest neighbours against the number of training models on log axes, falling from about 0.7 dex at 3,125 models to 0.29 dex at 200,000."></div>
-        <figcaption>Median error of nearest neighbours (k = 8) against the number of training models.</figcaption>
+        <div class="frame narrow"><img src="figures/neighbours_learning_curve.png" width="532" height="364" alt="Median error of nearest neighbours against the number of training models on log axes, falling from about 1.1 dex at 3,125 models to 0.29 dex at 200,000."></div>
+        <figcaption>Median error of nearest neighbours (<i>k</i> = 8) against the number of training models.</figcaption>
       </figure>
-      <p>The error falls roughly as <i>N</i><sup>−1/3</sup>. In six dimensions the spacing between neighbouring models shrinks only as <i>N</i><sup>−1/6</sup>, and in smooth regions this kind of interpolation has an error that goes as the spacing squared. Halving the error takes eight times more models and a ten times smaller error takes a thousand times more, so tables grow large and slow long before they grow accurate.</p>
+      <p>Nearest neighbours reaches 0.29 dex, better than any polynomial, but its error falls only as <i>N</i><sup>−1/3</sup>: in six dimensions the spacing shrinks as <i>N</i><sup>−1/6</sup> and the interpolation error goes as the spacing squared. Halving the error takes eight times more models. The polynomial was linear in its coefficients, so one solve found them. The network is not, which is why Step 3 has to walk downhill.</p>
 
       <div class="exercises">
         <h3>Exercises</h3>
         <ol>
-          <li>Fit a degree-6 polynomial. How many terms, how long, and how much better?</li>
-          <li>Try k = 4 and k = 16. Why does a large k make the error worse?</li>
+          <li>Solve the degree-5 problem with the normal equations and compare with the SVD solution. How does the difference relate to κ(Φ)²?</li>
+          <li>Try <i>k</i> = 4 and <i>k</i> = 16. Why does a large <i>k</i> make the error worse?</li>
           <li>Time a single nearest-neighbour prediction. Would it be fast enough for a retrieval that calls it a million times?</li>
         </ol>
       </div>
@@ -556,90 +660,243 @@ print(evaluate.summary_errors(outputs[val], log10_pred))</code></pre>
 
     <section id="numpy">
       <p class="eyebrow">Step 3 · lessons/03_numpy_network.ipynb</p>
-      <h2>A neural network from scratch</h2>
-      <p>A polynomial adds up a fixed list of functions and only adjusts how much of each it uses. A neural network also adds up simple functions, but it adjusts the functions themselves (where each one switches, how steeply, and along which direction in input space), which lets it follow a cliff in one corner without wiggling everywhere else. Everything in this step is plain NumPy, in <code>emulator/numpy_mlp.py</code>.</p>
+      <h2>A neural network, by hand</h2>
 
-      <h3>One hidden layer in one dimension</h3>
-      <div class="eq"><span><i>y</i>(<i>x</i>) = <i>c</i> + Σ<sub><i>j</i></sub> <i>v<sub>j</sub></i> tanh(<i>w<sub>j</sub></i> <i>x</i> + <i>b<sub>j</sub></i>)</span></div>
-      <p>Each hidden unit is a smooth step whose position is set by −<i>b</i>/<i>w</i> and whose steepness is set by <i>w</i>, and training adjusts every <i>w</i>, <i>b</i>, <i>v</i> and <i>c</i>. The figure fits a toy curve with the two features seen in Step 1, a small step and a cliff onto a floor.</p>
+      <h3>One unit, one layer</h3>
+      <p>A hidden unit takes a weighted sum of its inputs plus a bias and passes it through a smooth step. A layer of <i>n</i> units does this <i>n</i> times, which for a batch of <i>B</i> models is one matrix product:</p>
+      <div class="eq">
+        <span><i>z</i> = Σ<sub><i>k</i></sub> <i>x<sub>k</sub> w<sub>k</sub></i> + <i>b</i>,&nbsp;&nbsp; <i>a</i> = tanh(<i>z</i>)&nbsp;&nbsp; ⟶&nbsp;&nbsp; <i>Z</i> = <i>XW</i> + 𝟙<i>b</i><sup>T</sup> (<i>B</i> × <i>n</i>),&nbsp;&nbsp; <i>A</i> = tanh(<i>Z</i>)</span>
+      </div>
+      <p>Entry <i>Z<sub>ij</sub></i> is unit <i>j</i>'s weighted sum for model <i>i</i>. With one input and one output, <i>y</i>(<i>x</i>) = <i>c</i> + Σ<sub><i>j</i></sub> <i>v<sub>j</sub></i> tanh(<i>w<sub>j</sub>x</i> + <i>b<sub>j</sub></i>) is a sum of smooth steps at positions −<i>b</i>/<i>w</i> with steepness <i>w</i>, and training adjusts all of them:</p>
       <figure>
         <div class="frame"><img src="figures/toy_hidden_units.png" width="1190" height="390" alt="Left: a toy curve with a floor, a steep ramp and a small step, fitted by networks with 1, 3 and 30 hidden units. Right: the three contributions of the 3-unit network, two of which are large and of opposite sign."></div>
         <figcaption>Left: a toy curve fitted with 1, 3 and 30 hidden units. Right: the contribution of each unit of the 3-unit network.</figcaption>
       </figure>
-      <p>One unit can make one step, so it spends itself on the cliff and misses the small step near <i>x</i> = 0.5. Three units capture both, and thirty sharpen the corners. The units do not split the work the way you would by hand (two of them are large and partly cancel), because many sets of weights give nearly the same curve and training only has to find one of them.</p>
+      <p>One unit makes one step, so it takes the cliff and misses the small step. Three units capture both, though not the way you would split the work by hand: two of them are large and partly cancel, because many sets of weights give nearly the same curve.</p>
 
-      <h3>The network for our data</h3>
-      <div class="eq"><span><i>a</i><sub>1</sub> = tanh(<i>x W</i><sub>1</sub> + <i>b</i><sub>1</sub>),&nbsp;&nbsp; <i>a</i><sub>2</sub> = tanh(<i>a</i><sub>1</sub> <i>W</i><sub>2</sub> + <i>b</i><sub>2</sub>),&nbsp;&nbsp; <i>y</i> = <i>a</i><sub>2</sub> <i>W</i><sub>3</sub> + <i>b</i><sub>3</sub></span></div>
-      <p>Each row of <i>x</i> is one model. With two hidden layers of 64 units, <i>W</i><sub>1</sub> is 6 × 64, <i>W</i><sub>2</sub> is 64 × 64 and <i>W</i><sub>3</sub> is 64 × 19, which makes 5,843 numbers to describe 3.8 million training values. The output layer has no tanh so that the outputs can take any value. The weights start random, drawn with a spread of 1/√(inputs to the layer) so that the signal keeps its size from layer to layer.</p>
+      <h3>Starting weights, and why their spread is 1/√<i>n</i><sub>in</sub></h3>
+      <p>A unit adds up <i>n</i><sub>in</sub> terms <i>a<sub>k</sub>w<sub>k</sub></i>. With independent zero-mean weights of variance <i>s</i>², Var(<i>z</i>) = <i>n</i><sub>in</sub> <i>s</i>² E[<i>a</i>²], so <i>s</i>² = 1/<i>n</i><sub>in</sub> keeps the signal's size from layer to layer (LeCun initialization):</p>
+      <pre><code>a = x_train[:2000]  # (2000, 6)
+for layer in range(8):
+    n_in = a.shape[1]
+    W = rng.normal(0.0, factor / np.sqrt(n_in), size=(n_in, 256))  # factor 0.5, 1 or 2
+    a = np.tanh(a @ W)</code></pre>
+      <figure>
+        <div class="frame"><img src="figures/initialization.png" width="1090" height="370" alt="Left: standard deviation of the activations over 8 layers for three weight spreads; half the LeCun spread decays to 0.002, LeCun to 0.24, double stays near 0.7. Right: fraction of saturated units, rising to 7 percent for double the spread and zero otherwise."></div>
+        <figcaption>Spread of the activations (left) and fraction of saturated units, |<i>a</i>| &gt; 0.99 (right), through eight tanh layers of 256 units, for three weight spreads.</figcaption>
+      </figure>
+      <p>Half the LeCun spread leaves a signal of 0.002 after eight layers, so later layers see almost nothing. Double the spread drives 7% of the units into saturation, where tanh′ = 1 − <i>a</i>² ≈ 0 and gradients stop flowing back. LeCun keeps 0.24 (tanh still shrinks it slowly, since |tanh <i>z</i>| &lt; |<i>z</i>|).</p>
 
-      <h3>The loss is a likelihood</h3>
-      <div class="eq"><span><i>L</i> = (1/<i>NK</i>) Σ<sub><i>i</i></sub> Σ<sub><i>k</i></sub> (<i>ŷ<sub>ik</sub></i> − <i>y<sub>ik</sub></i>)²</span></div>
-      <p>Up to a constant, the mean squared error is minus the log-likelihood of Gaussian errors with σ = 1 in standardized units. Training a network is therefore maximum-likelihood fitting, with thousands of parameters and no closed-form solution because the model is not linear in its parameters.</p>
+      <h3>The forward pass</h3>
+      <div class="eq"><span><i>A</i><sub>1</sub> = tanh(<i>X</i>′<i>W</i><sub>1</sub> + 𝟙<i>b</i><sub>1</sub><sup>T</sup>),&nbsp;&nbsp; <i>A</i><sub>2</sub> = tanh(<i>A</i><sub>1</sub><i>W</i><sub>2</sub> + 𝟙<i>b</i><sub>2</sub><sup>T</sup>),&nbsp;&nbsp; <i>Ŷ</i>′ = <i>A</i><sub>2</sub><i>W</i><sub>3</sub> + 𝟙<i>b</i><sub>3</sub><sup>T</sup></span></div>
+      <pre><code>W1 = rng.normal(0.0, 1.0 / np.sqrt(6), size=(6, 64))
+W2 = rng.normal(0.0, 1.0 / np.sqrt(64), size=(64, 64))
+W3 = rng.normal(0.0, 1.0 / np.sqrt(64), size=(64, 19))
+b1, b2, b3 = np.zeros(64), np.zeros(64), np.zeros(19)  # 5,843 numbers in all
+
+x, y = x_train[:256], y_train[:256]  # one batch: (256, 6), (256, 19)
+a1 = np.tanh(x @ W1 + b1)  # (256, 64)
+a2 = np.tanh(a1 @ W2 + b2)  # (256, 64)
+y_hat = a2 @ W3 + b3  # (256, 19): no tanh on the output
+loss = np.mean((y_hat - y) ** 2)  # 1.15 with random weights</code></pre>
+      <p class="check"><b>Check</b><code>numpy_mlp.init_params</code> draws the same weights for the same seed, and <code>numpy_mlp.forward</code> gives the same outputs (largest difference 0.0).</p>
+      <p>The loss <i>L</i> = ‖<i>Ŷ</i>′ − <i>Y</i>′‖<sub>F</sub>² / <i>BK</i> is, up to a constant, minus the log-likelihood of Gaussian errors with σ = 1 in standardized units, so training is maximum-likelihood fitting. With random weights it is about 1, the data's own spread.</p>
 
       <h3>Backpropagation</h3>
-      <p>The gradient of the loss comes from the chain rule, applied layer by layer from the output back. Write <i>z</i> = <i>aW</i> + <i>b</i> for a layer's value before the tanh and δ = ∂<i>L</i>/∂<i>z</i>:</p>
+      <p>Write Δ = ∂<i>L</i>/∂<i>Z</i> for a layer's values before the tanh. In index notation <i>Z<sub>ij</sub></i> = Σ<sub><i>k</i></sub> <i>A<sub>ik</sub>W<sub>kj</sub></i> + <i>b<sub>j</sub></i>, and the chain rule gives three rules, plus one for the tanh:</p>
       <div class="eq">
-        <span>δ<sub>3</sub> = 2 (<i>ŷ</i> − <i>y</i>) / <i>NK</i></span>
-        <span>∂<i>L</i>/∂<i>W</i> = <i>a</i><sup>T</sup> δ,&nbsp;&nbsp; ∂<i>L</i>/∂<i>b</i> = Σ δ</span>
-        <span>δ<sub>previous</sub> = (δ <i>W</i><sup>T</sup>) ⊙ (1 − <i>a</i>²)</span>
+        <span>∂<i>L</i>/∂<i>W<sub>kj</sub></i> = Σ<sub><i>i</i></sub> Δ<sub><i>ij</i></sub><i>A<sub>ik</sub></i>&nbsp; ⟹&nbsp; ∂<i>L</i>/∂<i>W</i> = <i>A</i><sup>T</sup>Δ</span>
+        <span>∂<i>L</i>/∂<i>b<sub>j</sub></i> = Σ<sub><i>i</i></sub> Δ<sub><i>ij</i></sub>, the column sums of Δ</span>
+        <span>∂<i>L</i>/∂<i>A<sub>ik</sub></i> = Σ<sub><i>j</i></sub> Δ<sub><i>ij</i></sub><i>W<sub>kj</sub></i>&nbsp; ⟹&nbsp; ∂<i>L</i>/∂<i>A</i> = Δ<i>W</i><sup>T</sup></span>
+        <span><i>A</i> = tanh(<i>Z</i>), tanh′ = 1 − <i>A</i>²&nbsp; ⟹&nbsp; ∂<i>L</i>/∂<i>Z</i> = (∂<i>L</i>/∂<i>A</i>) ⊙ (1 − <i>A</i>²)</span>
       </div>
-      <p>The last line uses d tanh(<i>z</i>)/d<i>z</i> = 1 − tanh²(<i>z</i>). In code, from <code>numpy_mlp.backward</code>:</p>
-      <pre><code>delta = 2.0 * (y_pred - y_true) / y_true.size
-grads = [None] * len(params)
-for index in reversed(range(len(params))):
-    a_in = activations[index]
-    grads[index] = {"W": a_in.T @ delta, "b": delta.sum(axis=0)}
-    if index > 0:
-        delta = (delta @ params[index]["W"].T) * (1.0 - a_in**2)</code></pre>
-      <p>Hand-written gradients are easy to get wrong, so the notebook checks them against finite differences, nudging each of the 154 weights of a tiny network up and down by 10⁻⁶. The two agree to about 10⁻⁹.</p>
+      <pre><code>d3 = 2.0 * (y_hat - y) / y.size  # dL/dz3, (256, 19)
+gW3 = a2.T @ d3  # (64, 19)
+gb3 = d3.sum(axis=0)  # (19,)
+d2 = (d3 @ W3.T) * (1.0 - a2**2)  # dL/dz2, (256, 64)
+gW2 = a1.T @ d2  # (64, 64)
+gb2 = d2.sum(axis=0)  # (64,)
+d1 = (d2 @ W2.T) * (1.0 - a1**2)  # dL/dz1, (256, 64)
+gW1 = x.T @ d1  # (6, 64)
+gb1 = d1.sum(axis=0)  # (64,)</code></pre>
+      <p>Every gradient has the shape of its weight, and each layer costs two matrix products, so the backward pass costs about two forward passes. The figure shows one training step.</p>
+      <figure>
+        <div class="diagram">
+          <svg viewBox="0 0 780 300" role="img" aria-labelledby="dia-title dia-desc">
+            <title id="dia-title">One training step</title>
+            <desc id="dia-desc">Forward pass from the inputs through two tanh layers to the outputs and the loss, then the backward pass from the loss through the same layers, producing the gradient of each weight matrix.</desc>
+            <defs>
+              <marker id="arrow-f" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head-f" d="M0,0 L10,5 L0,10 z"/></marker>
+              <marker id="arrow-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="head-b" d="M0,0 L10,5 L0,10 z"/></marker>
+            </defs>
+            <text class="label" x="10" y="20">FORWARD</text>
+            <g class="fwd">
+              <rect x="10" y="32" width="120" height="64" rx="6"/>
+              <text x="70" y="58" text-anchor="middle">x′</text>
+              <text x="70" y="78" text-anchor="middle" class="shape">256 × 6</text>
+              <rect x="160" y="32" width="150" height="64" rx="6"/>
+              <text x="235" y="58" text-anchor="middle">A₁ = tanh(x′W₁ + b₁)</text>
+              <text x="235" y="78" text-anchor="middle" class="shape">256 × 64</text>
+              <rect x="340" y="32" width="150" height="64" rx="6"/>
+              <text x="415" y="58" text-anchor="middle">A₂ = tanh(A₁W₂ + b₂)</text>
+              <text x="415" y="78" text-anchor="middle" class="shape">256 × 64</text>
+              <rect x="520" y="32" width="120" height="64" rx="6"/>
+              <text x="580" y="58" text-anchor="middle">Ŷ′ = A₂W₃ + b₃</text>
+              <text x="580" y="78" text-anchor="middle" class="shape">256 × 19</text>
+              <rect x="665" y="32" width="110" height="64" rx="6"/>
+              <text x="720" y="58" text-anchor="middle">L = ‖Ŷ′ − Y′‖²</text>
+              <text x="720" y="78" text-anchor="middle" class="shape">/ (256 · 19)</text>
+            </g>
+            <line class="arrow-f" x1="130" y1="64" x2="158" y2="64"/>
+            <line class="arrow-f" x1="310" y1="64" x2="338" y2="64"/>
+            <line class="arrow-f" x1="490" y1="64" x2="518" y2="64"/>
+            <line class="arrow-f" x1="640" y1="64" x2="663" y2="64"/>
+            <text class="label" x="10" y="144">BACKWARD</text>
+            <g class="bwd">
+              <rect x="665" y="156" width="110" height="64" rx="6"/>
+              <text x="720" y="182" text-anchor="middle">Δ₃ = 2(Ŷ′ − Y′)</text>
+              <text x="720" y="202" text-anchor="middle" class="shape">/ (256 · 19)</text>
+              <rect x="455" y="156" width="180" height="64" rx="6"/>
+              <text x="545" y="182" text-anchor="middle">∂L/∂W₃ = A₂ᵀΔ₃</text>
+              <text x="545" y="202" text-anchor="middle">Δ₂ = (Δ₃W₃ᵀ) ⊙ (1 − A₂²)</text>
+              <rect x="245" y="156" width="180" height="64" rx="6"/>
+              <text x="335" y="182" text-anchor="middle">∂L/∂W₂ = A₁ᵀΔ₂</text>
+              <text x="335" y="202" text-anchor="middle">Δ₁ = (Δ₂W₂ᵀ) ⊙ (1 − A₁²)</text>
+              <rect x="35" y="156" width="180" height="64" rx="6"/>
+              <text x="125" y="182" text-anchor="middle">∂L/∂W₁ = x′ᵀΔ₁</text>
+              <text x="125" y="202" text-anchor="middle" class="shape">∂L/∂b = column sums of Δ</text>
+            </g>
+            <line class="arrow-b" x1="720" y1="98" x2="720" y2="154"/>
+            <line class="arrow-b" x1="663" y1="188" x2="637" y2="188"/>
+            <line class="arrow-b" x1="453" y1="188" x2="427" y2="188"/>
+            <line class="arrow-b" x1="243" y1="188" x2="217" y2="188"/>
+            <text class="label" x="10" y="258">UPDATE</text>
+            <text x="10" y="284">every weight: W ← W − η ∂L/∂W (gradient descent, Step 3) or the Adam rule (Step 4)</text>
+          </svg>
+        </div>
+        <figcaption>One training step for the 6–64–64–19 network on a batch of 256 models: the forward pass (blue) stores <i>A</i>₁ and <i>A</i>₂, and the backward pass (orange) reuses them to produce every gradient.</figcaption>
+      </figure>
+      <p>Hand-written gradients are easy to get wrong, so we nudge single weights by ±<i>h</i> and compare with the central finite difference [<i>L</i>(<i>w</i> + <i>h</i>) − <i>L</i>(<i>w</i> − <i>h</i>)] / 2<i>h</i>:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Weight</th><th class="num">Backpropagation</th><th class="num">Finite difference (h = 10⁻⁶)</th></tr></thead>
+          <tbody>
+            <tr><td><i>W</i>₁[2, 5]</td><td class="num">3.84120220 × 10⁻⁴</td><td class="num">3.84120069 × 10⁻⁴</td></tr>
+            <tr><td><i>b</i>₁[7]</td><td class="num">−1.07318400 × 10⁻³</td><td class="num">−1.07318399 × 10⁻³</td></tr>
+            <tr><td><i>W</i>₂[10, 3]</td><td class="num">−5.39299469 × 10⁻³</td><td class="num">−5.39299461 × 10⁻³</td></tr>
+            <tr><td><i>W</i>₃[7, 11]</td><td class="num">−1.35979744 × 10⁻²</td><td class="num">−1.35979745 × 10⁻²</td></tr>
+            <tr><td><i>b</i>₃[18]</td><td class="num">3.49653632 × 10⁻³</td><td class="num">3.49653628 × 10⁻³</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="check"><b>Check</b>Agreement to seven significant figures, the precision of a central difference with <i>h</i> = 10⁻⁶, and <code>numpy_mlp.backward</code> gives the same gradients (largest difference 0.0).</p>
 
-      <h3>Gradient descent</h3>
-      <div class="eq"><span>θ ← θ − η ∂<i>L</i>/∂θ</span></div>
-      <p>Each step uses the gradient of a random mini-batch of 256 models rather than all 200,000, which gives a noisy but unbiased estimate and about 780 steps per pass through the data (an epoch). Twenty epochs of this stochastic gradient descent take 9 seconds and reach a median error of 0.29 dex and a 99th percentile of 1.9 dex, matching nearest neighbours on the typical error and beating every baseline on the bad cases.</p>
+      <h3>The training loop</h3>
+      <p>Gradient descent moves every weight downhill, θ ← θ − η ∂<i>L</i>/∂θ. Each step uses a random mini-batch of 256 models, whose gradient is a noisy but unbiased estimate of the full one, and one pass through the shuffled data is an epoch. This is the whole of stochastic gradient descent:</p>
+      <pre><code>for epoch in range(20):
+    order = shuffle_rng.permutation(len(x_train))
+    for begin in range(0, len(order), 256):
+        batch = order[begin : begin + 256]
+        x, y = x_train[batch], y_train[batch]
+
+        a1 = np.tanh(x @ W1 + b1)  # forward
+        a2 = np.tanh(a1 @ W2 + b2)
+        y_hat = a2 @ W3 + b3
+
+        d3 = 2.0 * (y_hat - y) / y.size  # backward
+        d2 = (d3 @ W3.T) * (1.0 - a2**2)
+        d1 = (d2 @ W2.T) * (1.0 - a1**2)
+
+        W3 -= learning_rate * (a2.T @ d3)  # update
+        b3 -= learning_rate * d3.sum(axis=0)
+        W2 -= learning_rate * (a1.T @ d2)
+        b2 -= learning_rate * d2.sum(axis=0)
+        W1 -= learning_rate * (x.T @ d1)
+        b1 -= learning_rate * d1.sum(axis=0)</code></pre>
+      <p class="check"><b>Check</b>Twenty epochs take 5 seconds and bring the validation loss from 0.077 to 0.0079. The package's <code>numpy_mlp.train_sgd</code>, started from the same weights and shuffled with the same seed, ends at exactly the same weights (largest difference 0.0).</p>
+      <p>This 5,843-number network reaches a median error of 0.29 dex and a 99th percentile of 1.9 dex, matching nearest neighbours on the typical error and beating every baseline on the bad cases.</p>
       <figure>
         <div class="frame narrow"><img src="figures/learning_rates.png" width="571" height="361" alt="Validation loss over five epochs for learning rates 0.03, 0.3 and 3. The 0.3 curve falls fastest, 0.03 falls slowly, and 3 drops once and then stalls."></div>
         <figcaption>Validation loss over five epochs of SGD for three learning rates, from the same starting weights.</figcaption>
       </figure>
-      <p>The learning rate η is the most important setting in training. At 0.03 the loss creeps down, while at 3 each step jumps across the valley instead of down it, so the loss stalls and bounces.</p>
+      <p>The learning rate is the most important setting: at 0.03 the loss creeps down, while at 3 each step jumps across the valley instead of down it.</p>
 
       <div class="exercises">
         <h3>Exercises</h3>
         <ol>
-          <li>Replace tanh by ReLU, max(0, <i>z</i>). Change the activation in <code>forward</code> and its derivative in <code>backward</code> (1 where <i>z</i> &gt; 0 and 0 elsewhere), then run the gradient check before training.</li>
-          <li>Make the hidden layers 16 or 128 units wide. How do the training time and the error change?</li>
-          <li>Add momentum to <code>train_sgd</code> (<i>v</i> ← 0.9<i>v</i> − η<i>g</i>, then θ ← θ + <i>v</i>). Does it train faster?</li>
+          <li>Replace tanh by ReLU, max(0, <i>z</i>): change the activation in the forward pass and its derivative (1 where <i>z</i> &gt; 0, 0 elsewhere) in the backward pass, then rerun the gradient check.</li>
+          <li>Add a third hidden layer by hand. Which lines of the loop change?</li>
+          <li>Add momentum: <i>v</i> ← 0.9<i>v</i> − η<i>g</i>, θ ← θ + <i>v</i>. Does it train faster?</li>
         </ol>
       </div>
     </section>
 
     <section id="jax">
       <p class="eyebrow">Step 4 · lessons/04_jax_emulator.ipynb</p>
-      <h2>The emulator in JAX</h2>
-      <p>The NumPy network learns, but slowly, and every new idea means deriving a new backward pass. Three upgrades fix this: JAX computes the gradients and compiles the code, Adam replaces plain gradient descent, and the learning rate decays during training. Short runs then settle the settings one at a time before a single long run trains the final emulator.</p>
+      <h2>JAX, Adam and the training loop</h2>
+      <p>Three upgrades turn Step 3's network into a production emulator: automatic gradients, Adam, and a decaying learning rate. Each one is opened up and checked.</p>
 
-      <h3>JAX in three ideas</h3>
-      <p>The module <code>jax.numpy</code> mirrors NumPy, so the forward pass and the loss are the NumPy functions with <code>np</code> replaced by <code>jnp</code>. The function <code>jax.grad</code> turns a function into its gradient, so <code>jax.grad(loss_fn)</code> is the whole backward pass, and it agrees with the hand-written one to 10⁻⁷, the precision of the float32 numbers JAX uses by default. The function <code>jax.jit</code> compiles a function on its first call, which on a laptop CPU makes a gradient step about twice as fast.</p>
-      <pre><code>import jax
-from emulator import jax_mlp
+      <h3>What <code>jax.grad</code> computes</h3>
+      <p>JAX records the operations a function performs and, to differentiate, walks them backwards. Each operation contributes its vector–Jacobian product (VJP): given the gradient with respect to its output, <i>Z̄</i> = ∂<i>L</i>/∂<i>Z</i>, it returns the gradient with respect to its inputs. For our two operations these are exactly Step 3's rules:</p>
+      <div class="eq"><span><i>Z</i> = <i>AW</i>:&nbsp; <i>Ā</i> = <i>Z̄W</i><sup>T</sup>,&nbsp; <i>W̄</i> = <i>A</i><sup>T</sup><i>Z̄</i>;&nbsp;&nbsp;&nbsp; <i>A</i> = tanh(<i>Z</i>):&nbsp; <i>Z̄</i> = <i>Ā</i> ⊙ (1 − <i>A</i>²)</span></div>
+      <pre><code>_, matmul_vjp = jax.vjp(jnp.matmul, A, W)
+A_bar, W_bar = matmul_vjp(Z_bar)
+np.allclose(A_bar, Z_bar @ W.T), np.allclose(W_bar, A.T @ Z_bar)  # True, True
 
-params = jax_mlp.init_params([6, 256, 256, 256, 19], seed=0)
-gradients = jax.grad(jax_mlp.loss_fn)(params, x_batch, y_batch)</code></pre>
+_, tanh_vjp = jax.vjp(jnp.tanh, Z)
+np.allclose(tanh_vjp(Z_bar)[0], Z_bar * (1.0 - jnp.tanh(Z) ** 2))  # True</code></pre>
+      <p class="check"><b>Check</b>Chaining these from the loss back is backpropagation: <code>jax.grad(jax_mlp.loss_fn)</code> matches Step 3's hand-written gradients to 2–5 × 10⁻⁷, the precision of the float32 numbers JAX uses by default. Compiling with <code>jax.jit</code> makes one gradient of a 1024-model batch twice as fast on a laptop CPU (6.6 ms to 3.5 ms).</p>
 
-      <h3>Adam</h3>
-      <p>Plain gradient descent uses one step size for every weight, although some gradients are a thousand times larger than others. Adam keeps two running averages for each weight, of the gradient and of its square, and divides one by the square root of the other, so every weight moves by about the learning rate per step whatever the size of its gradient:</p>
+      <h3>Adam, by hand</h3>
+      <p>Plain gradient descent uses one learning rate for every weight. Adam keeps, for each weight, running averages of its gradient and of its squared gradient, and steps by their ratio (all operations element by element, step <i>t</i>):</p>
       <div class="eq">
-        <span><i>m</i> ← β<sub>1</sub><i>m</i> + (1 − β<sub>1</sub>) <i>g</i>,&nbsp;&nbsp; <i>v</i> ← β<sub>2</sub><i>v</i> + (1 − β<sub>2</sub>) <i>g</i>²</span>
-        <span>θ ← θ − η <i>m̂</i> / (√<i>v̂</i> + ε)</span>
+        <span><i>m<sub>t</sub></i> = β₁<i>m</i><sub><i>t</i>−1</sub> + (1 − β₁)<i>g<sub>t</sub></i>,&nbsp;&nbsp; <i>v<sub>t</sub></i> = β₂<i>v</i><sub><i>t</i>−1</sub> + (1 − β₂)<i>g<sub>t</sub></i>²</span>
+        <span><i>m̂<sub>t</sub></i> = <i>m<sub>t</sub></i>/(1 − β₁<sup><i>t</i></sup>),&nbsp;&nbsp; <i>v̂<sub>t</sub></i> = <i>v<sub>t</sub></i>/(1 − β₂<sup><i>t</i></sup>),&nbsp;&nbsp; θ<sub><i>t</i></sub> = θ<sub><i>t</i>−1</sub> − η <i>m̂<sub>t</sub></i>/(√<i>v̂<sub>t</sub></i> + ε)</span>
       </div>
-      <p>Here <i>m̂</i> and <i>v̂</i> are <i>m</i> and <i>v</i> corrected for starting at zero, with β<sub>1</sub> = 0.9 and β<sub>2</sub> = 0.999, and <code>adam_update</code> writes this out in a dozen lines.</p>
+      <p>With β₁ = 0.9, β₂ = 0.999 and ε = 10⁻⁸, the averages remember about 10 and 1,000 steps, and the hats undo the bias from starting them at zero. The ratio <i>m̂</i>/√<i>v̂</i> is about ±1 for a weight whose gradient keeps its sign, so every weight moves by about η per step whatever the size of its gradient. A long, narrow valley, <i>L</i> = ½(100<i>w</i>₁² + <i>w</i>₂²), shows why that matters:</p>
+      <pre><code>w, m, v = np.array([0.9, 0.9]), np.zeros(2), np.zeros(2)
+for t in range(1, 101):
+    g = np.array([100.0, 1.0]) * w  # gradient of the valley
+    m = 0.9 * m + 0.1 * g
+    v = 0.999 * v + 0.001 * g**2
+    w = w - 0.05 * (m / (1.0 - 0.9**t)) / (np.sqrt(v / (1.0 - 0.999**t)) + 1e-8)</code></pre>
+      <figure>
+        <div class="frame narrow"><img src="figures/adam_valley.png" width="641" height="415" alt="Contours of a narrow valley. Gradient descent zig-zags across the steep direction and is still at w2 of about 0.15 after 100 steps; Adam heads diagonally to the minimum."></div>
+        <figcaption>100 steps of gradient descent (η = 0.018, just below the stability limit of 2/100) and of Adam (η = 0.05) on <i>L</i> = ½(100<i>w</i>₁² + <i>w</i>₂²), starting at (0.9, 0.9).</figcaption>
+      </figure>
+      <p>Gradient descent must keep its step below 2/100 to stay stable along the steep <i>w</i>₁, and then crawls along the shallow <i>w</i>₂, ending 0.15 from the minimum. Adam ends 0.0012 from it.</p>
+      <p class="check"><b>Check</b>On the network's first step the hats give <i>m̂</i> = <i>g</i> and <i>v̂</i> = <i>g</i>², so Adam moves every weight by η · sign(<i>g</i>): for <i>W</i>₁, whose gradients span 5.5 × 10⁻⁵ to 4.6 × 10⁻², the steps all lie between 0.9998η and η. The hand-written step matches <code>jax_mlp.adam_update</code> to 6 × 10⁻⁸ (float32).</p>
       <figure>
         <div class="frame narrow"><img src="figures/sgd_vs_adam.png" width="571" height="356" alt="Validation loss over ten epochs on a log axis. Adam falls below 0.01 by epoch 4, while SGD reaches about 0.011 only at epoch 10."></div>
         <figcaption>Validation loss over ten epochs for SGD (η = 0.3) and Adam (η = 0.001), with the same network and starting weights.</figcaption>
       </figure>
-      <p>Adam reaches in three epochs what SGD reaches in ten. During training the learning rate follows half a cosine from 10⁻³ to 10⁻⁵, taking large steps early and settling into the minimum late, and the training loop keeps the weights with the lowest validation loss.</p>
 
-      <h3>Choose settings with short runs</h3>
-      <p>Changing one thing at a time and comparing validation errors after 40 epochs (about 30 seconds per run) tests two ideas from Step 1:</p>
+      <h3>The learning-rate schedule</h3>
+      <div class="eq"><span>η(<i>e</i>) = η<sub>end</sub> + ½(η<sub>start</sub> − η<sub>end</sub>) [1 + cos(π<i>e</i>/(<i>E</i> − 1))],&nbsp;&nbsp; η<sub>start</sub> = 10⁻³,&nbsp; η<sub>end</sub> = 10⁻⁵,&nbsp; <i>E</i> = 300</span></div>
+      <p>Big steps early make fast progress, and small steps late let the loss settle into the minimum instead of bouncing around it. The formula in NumPy matches <code>jax_mlp.cosine_learning_rate</code> to 2 × 10⁻¹⁹.</p>
+
+      <h3>The JAX training loop</h3>
+      <p>One compiled step does the forward pass, the loss, the gradient and the Adam update. Around it, each epoch shuffles the training set into 195 batches of 1024 models, then evaluates the validation loss and keeps the best weights so far:</p>
+      <pre><code>loss_and_gradient = jax.value_and_grad(jax_mlp.loss_fn)
+
+@jax.jit
+def train_step(params, state, x_batch, y_batch, learning_rate):
+    loss, grads = loss_and_gradient(params, x_batch, y_batch)
+    new_params, new_state = jax_mlp.adam_update(params, grads, state, learning_rate)
+    return new_params, new_state, loss
+
+for epoch in range(n_epochs):
+    learning_rate = jax_mlp.cosine_learning_rate(epoch, n_epochs)
+    order = shuffle_rng.permutation(len(x_train))[: 195 * 1024].reshape(195, 1024)
+    for batch in order:
+        params, state, loss = train_step(params, state, x_train_j[batch], y_train_j[batch], learning_rate)
+    val_loss = float(jnp.mean((jax_mlp.forward(params, x_val_j) - y_val_j) ** 2))
+    if val_loss &lt; best_val_loss:
+        best_val_loss, best_params = val_loss, params</code></pre>
+      <p class="check"><b>Check</b>Over three epochs this loop and <code>jax_mlp.train</code> give the same validation losses: 0.03507, 0.01817 and 0.01775.</p>
+
+      <h3>Choosing settings with short runs</h3>
+      <p>Change one thing at a time and compare validation errors after 40 epochs (about 30 seconds per run). Short runs give the ranking, and the final run trains long once:</p>
       <div class="table-wrap">
         <table>
           <thead><tr><th>Variant (3 × 256 network, 40 epochs)</th><th class="num">Median</th><th class="num">99th pct.</th></tr></thead>
@@ -650,99 +907,164 @@ gradients = jax.grad(jax_mlp.loss_fn)(params, x_batch, y_batch)</code></pre>
           </tbody>
         </table>
       </div>
-      <p>Raising the floor helps, because the species that spend half the grid on the floor now have a smaller spread, so the loss attends to the part of their range that matters and the cliffs are shorter. Using 1000/T doubles the error even though the physics is simpler in 1/T, because the grid is uniform in log T and 1/T squeezes the hot models into a tenth of the input range. Whether a transform helps depends on the data as well as the physics, which is why every idea gets a short run.</p>
+      <p>Raising the floor helps: the species that spend half the grid on the floor get a smaller σ, so the standardized loss attends to the part of their range that matters, and the cliffs are shorter. Using 1000/T doubles the error even though the physics is simpler in 1/T, because the grid is uniform in log T and 1/T squeezes the hot models into a tenth of the input range.</p>
 
-      <h3>Train the final emulator</h3>
-      <pre><code>params = jax_mlp.init_params([6, 256, 256, 256, 19], seed=0)
-params, history = jax_mlp.train(
-    params,
-    x_train,
-    y_train,
-    x_val,
-    y_val,
-    n_epochs=300,
-    batch_size=1024,
-    lr_start=1e-3,
-    lr_end=1e-5,
-)</code></pre>
+      <h3>The final emulator</h3>
+      <p>Floor 10⁻¹⁵, three hidden layers of 256 tanh units (138,259 weights), Adam with the cosine schedule, batches of 1024, 300 epochs: 300 × 195 = 58,500 Adam steps in about four minutes.</p>
       <figure>
         <div class="frame"><img src="figures/final_training.png" width="990" height="350" alt="Left: training and validation loss over 300 epochs, falling from about 0.2 to 0.0003, with validation slightly above training late in the run. Right: the learning rate falling from 0.001 to 0.00001 along a cosine."></div>
-        <figcaption>Training and validation loss (left) and learning rate (right) for the 300-epoch run of the 3 × 256 network.</figcaption>
+        <figcaption>Training and validation loss (left) and learning rate (right) for the 300-epoch run.</figcaption>
       </figure>
-      <p>The run takes four minutes on a laptop CPU. The two losses separate slowly after about 50 epochs and the validation loss ends about 30% above the training loss, which is mild overfitting that does no harm here because the validation loss keeps falling to the last epoch. The validation errors reach a median of 0.022 dex and a 99th percentile of 0.25 dex, thirteen times better than nearest neighbours on the typical error.</p>
-
-      <h3>Save it</h3>
-      <p>The emulator is the weights plus the input and output transforms, and forgetting the transforms is the most common emulator bug. <code>save_emulator</code> writes all of it into one 559 kB file of plain NumPy arrays, against 464 MB for the grid.</p>
-      <pre><code>jax_mlp.save_emulator(
-    "../runs/emulator.npz",
-    params,
-    input_transform,
-    output_transform,
-    grid["input_names"],
-    grid["output_names"],
-    activation="tanh",
-)</code></pre>
+      <p>The losses separate slowly after about 50 epochs and the validation loss ends about 30% above the training loss, which is mild overfitting that does no harm here because the validation loss keeps falling and the loop keeps the best weights. The validation errors reach a median of 0.022 dex and a 99th percentile of 0.25 dex. <code>save_emulator</code> writes the weights and both transforms into one 559 kB file of plain arrays:</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Arrays in emulator.npz</th><th>Shapes</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td><code>W_0</code> … <code>W_3</code>, <code>b_0</code> … <code>b_3</code></td><td>6 × 256, 256 × 256, 256 × 256, 256 × 19, and their biases</td><td>the network (float32)</td></tr>
+            <tr><td><code>input_lower</code>, <code>input_upper</code></td><td>6, 6</td><td><i>l</i> and <i>u</i></td></tr>
+            <tr><td><code>output_mean</code>, <code>output_std</code>, <code>output_log10_floor</code></td><td>19, 19, scalar</td><td><i>μ</i>, <i>σ</i> and <i>F</i></td></tr>
+            <tr><td><code>input_names</code>, <code>output_names</code>, <code>activation</code></td><td>6, 19, scalar</td><td>labels, and "tanh"</td></tr>
+          </tbody>
+        </table>
+      </div>
 
       <div class="exercises">
         <h3>Exercises</h3>
         <ol>
-          <li>Make the network wider (512 units) or deeper (four hidden layers) in a 40-epoch run. Which helps more per second of training?</li>
-          <li>Try a floor of 10⁻²⁰. Where between −30 and −15 do the gains come from?</li>
-          <li>Change the batch size to 256 and to 4096 with the same number of epochs. What happens to the time per epoch and to the error?</li>
+          <li>In the valley, try gradient descent with η = 0.021. What happens, and why does 2/100 set the limit?</li>
+          <li>Make the network wider (512) or deeper (four hidden layers) in a 40-epoch run. Which helps more per second of training?</li>
+          <li>Change the batch size to 256 and to 4096. What happens to the time per epoch and to the error?</li>
         </ol>
       </div>
     </section>
 
-    <section id="test">
+    <section id="use">
       <p class="eyebrow">Step 5 · lessons/05_test_and_use.ipynb</p>
-      <h2>Test it, then use it</h2>
-      <p><code>TrainedEmulator</code> loads the saved file and evaluates the network with NumPy alone, so it runs inside any retrieval code with NumPy, including Python 3.8 environments without JAX.</p>
-      <pre><code>from emulator.trained import TrainedEmulator
+      <h2>Using the emulator, under the hood</h2>
 
-emulator = TrainedEmulator("../runs/emulator.npz")
-log10_values = emulator.predict_log10(features)  # features: (n_layers, 6)</code></pre>
+      <h3>Prediction from the saved arrays</h3>
+      <div class="eq">
+        <span><i>x</i>′ = 2(<i>x</i> − <i>l</i>)/(<i>u</i> − <i>l</i>) − 1,&nbsp;&nbsp; <i>a</i><sub>ℓ</sub> = tanh(<i>a</i><sub>ℓ−1</sub><i>W</i><sub>ℓ</sub> + <i>b</i><sub>ℓ</sub>) for ℓ = 1, 2, 3,&nbsp;&nbsp; <i>ŷ</i>′ = <i>a</i><sub>3</sub><i>W</i><sub>4</sub> + <i>b</i><sub>4</sub></span>
+        <span>log10 <i>ŷ</i> = max(<i>σ</i> ⊙ <i>ŷ</i>′ + <i>μ</i>, <i>F</i>)</span>
+      </div>
+      <pre><code>with np.load("../runs/emulator.npz") as file:
+    stored = {key: file[key] for key in file.files}
+W = [stored[f"W_{layer}"].astype(np.float64) for layer in range(4)]
+b = [stored[f"b_{layer}"].astype(np.float64) for layer in range(4)]
+
+a = 2.0 * (features - stored["input_lower"]) / (stored["input_upper"] - stored["input_lower"]) - 1.0
+a = np.tanh(a @ W[0] + b[0])  # (n, 256)
+a = np.tanh(a @ W[1] + b[1])  # (n, 256)
+a = np.tanh(a @ W[2] + b[2])  # (n, 256)
+log10_pred = np.maximum((a @ W[3] + b[3]) * stored["output_std"] + stored["output_mean"], stored["output_log10_floor"])</code></pre>
+      <p class="check"><b>Check</b>These eight lines give exactly what the package's <code>TrainedEmulator</code> gives (largest difference 0.0 dex). <code>TrainedEmulator</code> needs only NumPy, so it runs inside any retrieval code, Python 3.8 included.</p>
+      <p>One model costs 6 × 256 + 256 × 256 + 256 × 256 + 256 × 19 = 137,472 multiply-adds and 768 tanh evaluations: 38 µs when models are predicted one at a time, and 4.2 µs per model in batches of 100 or more, where the vector–matrix products become matrix–matrix products.</p>
 
       <h3>The final test</h3>
-      <p>On the 25,000 test models, which played no part in any choice, the median error is 0.022 dex and the 99th percentile 0.24 dex, the same as on the validation set. Per species, the median ranges from 0.0002 dex for He to 0.049 dex for H2S, and the 99th percentile stays below 0.4 dex for every output except C2H2 (0.6 dex) and H2S (1.0 dex). The mean molecular weight, which sets the scale height, is good to 0.0005 dex (0.1%).</p>
-
-      <h3>Where it struggles</h3>
+      <p>On the 25,000 test models, which played no part in any choice, the median error is 0.022 dex and the 99th percentile 0.24 dex, the same as on the validation set. Per species, the median ranges from 0.0002 dex for He to 0.049 dex for H2S, and the 99th percentile stays below 0.4 dex for every output except C2H2 (0.6 dex) and H2S (1.0 dex). The mean molecular weight is good to 0.0005 dex (0.1%).</p>
       <figure>
         <div class="frame"><img src="figures/error_vs_inputs.png" width="1241" height="629" alt="Six panels of the 95th-percentile error against each input, one line per output. H2S is highest, near 0.7 dex between log10 T of 2.2 and 2.4 and near log10 S/O of minus 1. Most outputs sit near 0.1 dex."></div>
         <figcaption>95th percentile of |error| in bins of each input, counted where the abundance exceeds 10⁻¹². Each line is one output, with the four largest in colour.</figcaption>
       </figure>
-      <p>The largest errors sit next to the floor, where a species switches on or off and the network has to turn a sharp corner. H2S is the hardest output, with its error largest below about 250 K and near S/O ≈ 0.1. The grid file shows why: below about 700 K most of the sulfur condenses, mainly as FeS with FeS2, Ni3S2 and MnS, so the H2S left in the gas is set by a series of sulfide condensates, each adding a kink. All ten worst test predictions are H2S or NH3 colder than 225 K, with errors of 3.6 to 5.8 dex.</p>
+      <p>The largest errors sit next to the floor, where a species switches on or off. H2S is the hardest output, worst below about 250 K and near S/O ≈ 0.1: below about 700 K most of the sulfur condenses, mainly as FeS with FeS2, Ni3S2 and MnS, so the H2S left in the gas follows a series of sulfide condensates, each adding a kink. All ten worst test predictions are H2S or NH3 colder than 225 K, with errors of 3.6 to 5.8 dex.</p>
 
-      <h3 id="speed">Speed</h3>
-      <p class="note">These FastChem timings are provisional. They come from the pyfastchem 4.0.4 wheel installed with pip, a build from source is being checked against them, and the speed-up factors below may change. The emulator's accuracy does not depend on them.</p>
+      <h3>Speed against FastChem</h3>
       <div class="table-wrap">
         <table>
           <thead><tr><th>100-layer atmosphere, M1 Max laptop</th><th class="num">Wall-clock time</th></tr></thead>
           <tbody>
-            <tr><td>FastChem with condensation (as in the grid)</td><td class="num">2.0 s</td></tr>
-            <tr><td>FastChem, gas phase only</td><td class="num">0.083 s</td></tr>
-            <tr class="ours"><td>Emulator</td><td class="num">0.0004 s</td></tr>
+            <tr><td>FastChem 4.0.4 built with -O3, condensation (as in the grid)</td><td class="num">0.115 s</td></tr>
+            <tr><td>FastChem 4.0.4 built with -O3, gas phase only</td><td class="num">0.012 s</td></tr>
+            <tr class="ours"><td>Emulator</td><td class="num">0.00042 s</td></tr>
           </tbody>
         </table>
       </div>
-      <p>The emulator is about 5,000 times faster than FastChem with condensation and 200 times faster than gas-phase FastChem. FastChem ran the 100 layers in parallel on all cores and the emulator in one NumPy call. A single FastChem model takes a few milliseconds in the gas phase above 300 K, and with condensation about 0.1 s above 1000 K and up to 3 s below 300 K, because the condensation solver needs hundreds of iterations (the grid file records a median of 155).</p>
+      <p>The emulator is about 280 times faster than FastChem with condensation and 30 times faster than gas-phase FastChem, with FastChem running the layers in parallel on all cores. It also cannot fail to converge in the middle of a retrieval, and it is differentiable. With the pip wheel of pyfastchem on a Mac, which is compiled without optimization, the same profile takes 2.0 s and 0.083 s, which overstates the emulator's advantage by more than ten times.</p>
 
       <h3>Atmosphere profiles</h3>
       <figure>
         <div class="frame"><img src="figures/profiles_vs_fastchem.png" width="1390" height="490" alt="Left: a hot (1200 to 2000 K) and a cool (150 to 900 K) temperature profile. Middle and right: log10 VMR of H2O, CO, CH4, NH3, TiO and electrons against pressure, with FastChem as thick black lines and the emulator as dashed coloured lines lying on top of them."></div>
         <figcaption>Two temperature profiles at [M/H] = +1 with solar C/O, S/O and N/O (left), and the abundances from FastChem (black) and the emulator (dashed) for the hot (middle) and cool (right) profile.</figcaption>
       </figure>
-      <p>Neither profile appears in the training set. The emulator follows FastChem through the CO–CH4 switch, the condensation of water at the top of the cool profile and the changing balance between NH3 and N2. The one visible departure is TiO near 5 mbar in the hot profile, where FastChem drops below 10⁻¹⁵ and the emulator stops at the floor it was trained with. For a point outside the training range, such as a 40 K layer, the emulator raises an error instead of returning a number.</p>
+      <p>Neither profile appears in the training set. The emulator follows FastChem through the CO–CH4 switch, water condensing at the top of the cool profile and the balance between NH3 and N2. The one visible departure is TiO near 5 mbar in the hot profile, where FastChem drops below 10⁻¹⁵ and the emulator stops at its floor.</p>
 
-      <h3>Accuracy needed for retrievals</h3>
-      <p>JWST retrievals typically constrain abundances to 0.1 to 0.5 dex, so a typical emulator error of a few hundredths of a dex adds little. The tails matter more, since a 1-dex error at a cliff could bias a retrieval that happens to sit there. The first improvements to try are training longer or wider, since the loss was still falling, and adding FastChem models near the cliffs. After those come an ensemble of networks trained from different seeds, whose spread also estimates the emulator's own error at each point, a check of how far the outputs break element conservation, and JAX's gradients for gradient-based samplers.</p>
+      <h3>Derivatives with respect to the inputs</h3>
+      <p>Gradient-based samplers (HMC, NUTS) and sensitivity studies need ∂ log10 <i>X</i>/∂ inputs. For one model, with <i>s</i><sub>ℓ</sub> = 1 − <i>a</i><sub>ℓ</sub>² the tanh derivatives of layer ℓ, differentiating the forward pass gives the Jacobian as a chain of matrix products, and the transforms convert it to physical units:</p>
+      <div class="eq">
+        <span><i>J</i> = ∂<i>ŷ</i>′/∂<i>x</i>′ = <i>W</i>₁ diag(<i>s</i>₁) <i>W</i>₂ diag(<i>s</i>₂) <i>W</i>₃ diag(<i>s</i>₃) <i>W</i>₄&nbsp;&nbsp; (6 × 19)</span>
+        <span>∂ log10 <i>ŷ<sub>k</sub></i> / ∂<i>x<sub>j</sub></i> = <i>J<sub>jk</sub></i> <i>σ<sub>k</sub></i> · 2/(<i>u<sub>j</sub></i> − <i>l<sub>j</sub></i>)&nbsp;&nbsp; (above the floor)</span>
+      </div>
+      <pre><code>a = 2.0 * (point - lower) / (upper - lower) - 1.0  # one model, (6,)
+s = []
+for layer in range(3):
+    a = np.tanh(a @ W[layer] + b[layer])
+    s.append(1.0 - a**2)  # (256,)
+
+J = (W[0] * s[0]) @ (W[1] * s[1]) @ (W[2] * s[2]) @ W[3]  # W * s = W diag(s), (6, 19)
+derivatives = J * std[None, :] * (2.0 / (upper - lower))[:, None]  # (6, 19)</code></pre>
+      <p class="check"><b>Check</b>JAX's automatic <code>jax.jacobian</code> of the same forward pass agrees to 4 × 10⁻¹⁴, and central finite differences of <code>TrainedEmulator</code> agree to 3 × 10⁻⁷.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>At 1,600 K, 1 bar, [M/H] = +1</th><th class="num">∂/∂ log10 T</th><th class="num">∂/∂ log10 P</th><th class="num">∂/∂ [M/H]</th></tr></thead>
+          <tbody>
+            <tr><td>log10 H2O</td><td class="num">−1.65</td><td class="num">0.03</td><td class="num">1.03</td></tr>
+            <tr><td>log10 CO</td><td class="num">−0.07</td><td class="num">0.00</td><td class="num">1.01</td></tr>
+            <tr><td>log10 CH4</td><td class="num">−15.29</td><td class="num">1.93</td><td class="num">−0.06</td></tr>
+            <tr><td>log10 NH3</td><td class="num">−4.07</td><td class="num">1.00</td><td class="num">0.42</td></tr>
+            <tr><td>log10 TiO</td><td class="num">48.86</td><td class="num">−0.94</td><td class="num">−0.62</td></tr>
+            <tr><td>log10 e⁻</td><td class="num">18.32</td><td class="num">−0.55</td><td class="num">0.35</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>The emulator has learned the textbook scalings of equilibrium chemistry without being told any chemistry. When CO holds the carbon, CO + 3H₂ ⇌ CH₄ + H₂O makes CH₄ grow as <i>P</i>² and nearly independent of metallicity (1.93 and −0.06). N₂ + 3H₂ ⇌ 2NH₃ makes NH₃ grow as <i>P</i> (N/H)<sup>½</sup> (1.00 and 0.42), and thermal ionization makes electrons fall as <i>P</i><sup>−½</sup> (−0.55). H₂O and CO scale with metallicity (1.03 and 1.01), and TiO above its condensate falls as 1/<i>P</i> (−0.94) and rises 49 dex per dex of temperature along its vapour-pressure curve.</p>
+
+      <h3>Refusing to extrapolate</h3>
+      <p>After the input transform the training range is [−1, 1] in every column, so the check is one comparison. A 40 K layer scales to −1.165 in temperature, and <code>TrainedEmulator</code> raises an error instead of predicting:</p>
+      <pre><code>x_scaled = 2.0 * (features - lower) / (upper - lower) - 1.0
+outside = np.abs(x_scaled) &gt; 1.0 + 1e-3  # True means extrapolating</code></pre>
+      <p>The 10⁻³ margin lets through test models that sit a hair (about 10⁻⁵) beyond the training extremes.</p>
+
+      <h3>Is it good enough?</h3>
+      <p>JWST retrievals typically constrain abundances to 0.1 to 0.5 dex, so a typical emulator error of a few hundredths of a dex adds little, while a 1-dex error at a cliff could bias a retrieval that happens to sit there. The next things to try are training longer or wider, adding FastChem models near the cliffs, and averaging an ensemble of networks trained from different seeds, whose spread also estimates the emulator's own error.</p>
 
       <div class="exercises">
         <h3>Exercises</h3>
         <ol>
-          <li>Train a second network with <code>seed=1</code> and average the two. How much do the errors drop, and where do the networks disagree most?</li>
-          <li>Make a profile for a 2500 K ultra-hot Jupiter and compare it with FastChem. Which species is hardest?</li>
+          <li>Compute the Jacobian for every layer of the cool profile and plot ∂ log10 X(H2O)/∂ log10 T against pressure. Where does it jump, and why?</li>
+          <li>Train a second emulator with another seed and average the two on the test set. How much do the errors drop?</li>
           <li>Use <code>TrainedEmulator</code> from a Python 3.8 environment without JAX.</li>
         </ol>
+      </div>
+    </section>
+
+    <section id="onefile">
+      <p class="eyebrow">Step 6 · from_scratch/emulator_numpy.py</p>
+      <h2>The whole emulator in one file</h2>
+      <p>The file <code>from_scratch/emulator_numpy.py</code> repeats Steps 1 to 5 in plain NumPy, with no machine-learning library: read the grid, split it, build both transforms, draw the weights, then train with hand-written backpropagation and Adam, predict and test. Its core is the backward pass of Step 3 and the Adam rule of Step 4:</p>
+      <pre><code>def backward(params, activations, y_pred, y_true):
+    delta = 2.0 * (y_pred - y_true) / y_true.size
+    grads = [None] * len(params)
+    for index in reversed(range(len(params))):
+        a_in = activations[index]
+        grads[index] = [a_in.T @ delta, delta.sum(axis=0)]
+        if index &gt; 0:
+            delta = (delta @ params[index][0].T) * (1.0 - a_in**2)
+    return grads
+
+def adam_step(params, grads, state, learning_rate, beta1=0.9, beta2=0.999, epsilon=1e-8):
+    state["t"] += 1
+    correction1, correction2 = 1.0 - beta1 ** state["t"], 1.0 - beta2 ** state["t"]
+    for layer, layer_grads, layer_m, layer_v in zip(params, grads, state["m"], state["v"]):
+        for value, grad, m, v in zip(layer, layer_grads, layer_m, layer_v):
+            m *= beta1
+            m += (1.0 - beta1) * grad
+            v *= beta2
+            v += (1.0 - beta2) * grad**2
+            value -= learning_rate * (m / correction1) / (np.sqrt(v / correction2) + epsilon)</code></pre>
+      <p>With its default settings (two hidden layers of 128 units, 40 epochs) it trains in 20 seconds and reaches a median test error of 0.093 dex. With the settings of Step 4 (three layers of 256, 300 epochs, batches of 1024) it matches the JAX emulator, 0.022 dex median and 0.24 dex at the 99th percentile, in about 11 minutes instead of 4. JAX buys speed and automatic gradients, while the accuracy stays the same. Reading <a href="https://github.com/luiswel/emulators-from-scratch/blob/main/from_scratch/emulator_numpy.py">the full file</a> from top to bottom is the best test that every piece of this course is clear.</p>
+      <div class="code-block">
+        <pre><code id="onefile-command">python from_scratch/emulator_numpy.py</code></pre>
+        <button class="copy" type="button" data-copy="onefile-command">Copy</button>
       </div>
     </section>
 
@@ -750,105 +1072,51 @@ log10_values = emulator.predict_log10(features)  # features: (n_layers, 6)</code
       <h2>Building your own emulator</h2>
       <p>The same steps carry over to any expensive code, whether a chemistry solver, a radiative-transfer model or a cloud model.</p>
       <ol class="steps">
-        <li>Choose the inputs and their ranges, and sample them with a Latin hypercube or a Sobol sequence, which give every model its own value of every input. Keep the solver's convergence flags and drop the failed models.</li>
+        <li>Choose the inputs and their ranges, and sample them with a Latin hypercube or a Sobol sequence. Keep the solver's convergence flags and drop the failed models.</li>
         <li>Set aside a test set that no choice ever touches, and agree on it with your team.</li>
         <li>Take logs of anything that spans orders of magnitude, scale the inputs to [−1, 1] and standardize the outputs, fitting the transforms on the training set and saving them with the weights.</li>
         <li>Decide what error matters in the units of the science (here dex, above a detectability threshold) and score every method that way.</li>
         <li>Fit a polynomial and nearest neighbours first, so you know what the network has to beat.</li>
-        <li>Start with a small network (two or three hidden layers of tanh units), Adam with a decaying learning rate and batches of about a thousand models, and keep the weights with the best validation loss.</li>
+        <li>Start with a small network (two or three hidden layers of tanh units, LeCun initialization), Adam with a decaying learning rate and batches of about a thousand models, and keep the weights with the best validation loss. Check your gradients against finite differences before training.</li>
         <li>Change one thing at a time in short runs: the floor, how the inputs are presented, the width and depth, the activation.</li>
-        <li>Train long once, open the test set once, and look for where the errors concentrate, then add models there or average several networks.</li>
+        <li>Train long once, open the test set once, look for where the errors concentrate, then add models there or average several networks.</li>
         <li>Check every input against the training range and refuse to extrapolate.</li>
       </ol>
     </section>
 
     <section id="notes">
       <h2>Notes on this grid</h2>
-      <p>These come from runs on the grid's own validation set, with errors measured as in Step 2.</p>
       <ul class="plain">
         <li>Train on a floor of 10⁻¹⁵ rather than the grid's 10⁻³⁰. In 40-epoch runs the median error fell from 0.083 to 0.056 dex, and in 60-epoch runs the worst case fell from 14 to 8.7 dex. A floor of 10⁻²⁰ sits in between, and floors above 10⁻¹⁵ are untested.</li>
-        <li>Keep log10 T as the temperature input, because 1000/T roughly doubled the error and feeding both gave the same error as log T alone.</li>
-        <li>tanh beat SiLU in the one comparison we ran (60 epochs with 1/T inputs, median 0.093 against 0.148 dex).</li>
-        <li>Training for 300 epochs halved the median error of a 60-epoch run and the loss was still falling, so a wider network (512 units per layer) is the next thing to try.</li>
-        <li>H2S below about 700 K is the hardest output, because sulfur condenses into a series of sulfides that each add a kink, and the ten worst test predictions are all H2S or NH3 colder than 225 K.</li>
-        <li>FastChem with condensation and the grid's settings takes about 0.1 s per model above 1000 K, about 1 s between 300 and 1000 K and about 3 s below 300 K on one core, whereas gas-phase chemistry alone takes a few milliseconds per model above 300 K. FastChem's default tolerances give the same times. These timings are provisional (see Speed in Step 5).</li>
+        <li>Keep log10 T as the temperature input, because 1000/T roughly doubled the error and feeding both gave the same error as log T alone. tanh beat SiLU in the one comparison we ran.</li>
+        <li>Training for 300 epochs halved the median error of a 60-epoch run and the loss was still falling, so a wider network is the next thing to try.</li>
+        <li>H2S below about 700 K is the hardest output, because sulfur condenses into a series of sulfides that each add a kink.</li>
+        <li>The pyfastchem 4.0.4 wheel that pip installs on Apple Silicon is compiled without optimization (FastChem's wheel workflow sets <code>CXXFLAGS</code>, which setuptools then uses instead of Python's own <code>-O3</code>). Built from the same source with <code>-O3</code>, one model on one core takes under 1 ms gas-only above 300 K (18 ms below), and 5 ms (above 1000 K), 19 ms (300–1000 K) and 79 ms (below 300 K) with condensation, against 10 to 40 times longer with the wheel. The outputs are identical, so the grid values are unaffected.</li>
         <li>The grid is valid only above about 57 K, because every FastChem attempt below that failed.</li>
+        <li>Every number on this page uses the split stored in the grid file, so it can be compared directly with anyone else's results on this grid.</li>
       </ul>
     </section>
 
-    <section id="maths">
-      <p class="eyebrow">Appendix</p>
-      <h2>The maths of training, in matrices</h2>
-      <p>This appendix collects the linear algebra behind Steps 1 to 4 for the final network, which has three hidden layers of 256 units. Each piece links to the function in the <code>emulator</code> package that computes it.</p>
-
-      <h3>The transforms</h3>
-      <p>For each input column <i>j</i> the training set gives a minimum <i>l<sub>j</sub></i> and a maximum <i>u<sub>j</sub></i>, and for each output column <i>k</i> the mean <i>μ<sub>k</sub></i> and standard deviation <i>σ<sub>k</sub></i> of the floored log10 values. Model <i>i</i> is then transformed as</p>
-      <div class="eq">
-        <span><i>x</i>′<sub><i>ij</i></sub> = 2 (<i>x<sub>ij</sub></i> − <i>l<sub>j</sub></i>) / (<i>u<sub>j</sub></i> − <i>l<sub>j</sub></i>) − 1</span>
-        <span><i>y</i>′<sub><i>ik</i></sub> = (max(<i>y<sub>ik</sub></i>, −15) − <i>μ<sub>k</sub></i>) / <i>σ<sub>k</sub></i></span>
+    <section id="equations">
+      <h2>Equations at a glance</h2>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Piece</th><th>Equation</th><th>Code</th></tr></thead>
+          <tbody>
+            <tr><td>Input transform</td><td><i>X</i>′ = 2(<i>X</i> − <i>l</i>)/(<i>u</i> − <i>l</i>) − 1</td><td><code>data.transform_inputs</code></td></tr>
+            <tr><td>Output transform</td><td><i>Y</i>′ = (max(<i>Y</i>, <i>F</i>) − <i>μ</i>)/<i>σ</i></td><td><code>data.transform_outputs</code></td></tr>
+            <tr><td>Least squares</td><td>Φ<sup>T</sup>Φ<i>C</i> = Φ<sup>T</sup><i>Y</i>′, or <i>C</i> = <i>V</i>Σ<sup>−1</sup><i>U</i><sup>T</sup><i>Y</i>′</td><td><code>baselines.fit_polynomial</code></td></tr>
+            <tr><td>Layer</td><td><i>A</i><sub>ℓ</sub> = tanh(<i>A</i><sub>ℓ−1</sub><i>W</i><sub>ℓ</sub> + 𝟙<i>b</i><sub>ℓ</sub><sup>T</sup>), output layer without tanh</td><td><code>numpy_mlp.forward</code></td></tr>
+            <tr><td>Initialization</td><td><i>W</i> ~ N(0, 1/<i>n</i><sub>in</sub>), <i>b</i> = 0</td><td><code>numpy_mlp.init_params</code></td></tr>
+            <tr><td>Loss</td><td><i>L</i> = ‖<i>Ŷ</i>′ − <i>Y</i>′‖<sub>F</sub>²/<i>BK</i></td><td><code>jax_mlp.loss_fn</code></td></tr>
+            <tr><td>Backpropagation</td><td>∂<i>L</i>/∂<i>W</i> = <i>A</i><sup>T</sup>Δ, ∂<i>L</i>/∂<i>b</i> = Σ Δ, Δ<sub>prev</sub> = (Δ<i>W</i><sup>T</sup>) ⊙ (1 − <i>A</i>²)</td><td><code>numpy_mlp.backward</code></td></tr>
+            <tr><td>Gradient descent</td><td>θ ← θ − η ∂<i>L</i>/∂θ</td><td><code>numpy_mlp.train_sgd</code></td></tr>
+            <tr><td>Adam</td><td>θ ← θ − η <i>m̂</i>/(√<i>v̂</i> + ε)</td><td><code>jax_mlp.adam_update</code></td></tr>
+            <tr><td>Schedule</td><td>η(<i>e</i>) = η<sub>end</sub> + ½(η<sub>start</sub> − η<sub>end</sub>)[1 + cos(π<i>e</i>/(<i>E</i>−1))]</td><td><code>jax_mlp.cosine_learning_rate</code></td></tr>
+            <tr><td>Jacobian</td><td><i>J</i> = <i>W</i>₁diag(<i>s</i>₁)<i>W</i>₂diag(<i>s</i>₂)<i>W</i>₃diag(<i>s</i>₃)<i>W</i>₄</td><td>Lesson 5, Section 7</td></tr>
+          </tbody>
+        </table>
       </div>
-      <p>Both are affine maps applied column by column, and fitting them means computing <i>l</i>, <i>u</i>, <i>μ</i> and <i>σ</i> and nothing more (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/data.py#L183"><code>fit_input_transform</code></a>, <a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/data.py#L263"><code>fit_output_transform</code></a>). The inverse, <i>y</i> = <i>σ<sub>k</sub></i> <i>y</i>′ + <i>μ<sub>k</sub></i> followed by the floor, turns network outputs back into log10 mixing ratios (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/data.py#L331"><code>inverse_transform_outputs</code></a>).</p>
-
-      <h3>The forward pass</h3>
-      <div class="eq">
-        <span><i>Z</i><sub>1</sub> = <i>X</i>′<i>W</i><sub>1</sub> + 𝟙<i>b</i><sub>1</sub><sup>T</sup>,&nbsp;&nbsp; <i>A</i><sub>1</sub> = tanh(<i>Z</i><sub>1</sub>)</span>
-        <span><i>Z</i><sub>2</sub> = <i>A</i><sub>1</sub><i>W</i><sub>2</sub> + 𝟙<i>b</i><sub>2</sub><sup>T</sup>,&nbsp;&nbsp; <i>A</i><sub>2</sub> = tanh(<i>Z</i><sub>2</sub>)</span>
-        <span><i>Z</i><sub>3</sub> = <i>A</i><sub>2</sub><i>W</i><sub>3</sub> + 𝟙<i>b</i><sub>3</sub><sup>T</sup>,&nbsp;&nbsp; <i>A</i><sub>3</sub> = tanh(<i>Z</i><sub>3</sub>)</span>
-        <span><i>Ŷ</i> = <i>A</i><sub>3</sub><i>W</i><sub>4</sub> + 𝟙<i>b</i><sub>4</sub><sup>T</sup></span>
-      </div>
-      <p>Here <i>X</i>′ is a batch of <i>B</i> models (<i>B</i> × 6), 𝟙 is a column of <i>B</i> ones so that each bias is added to every row, <i>W</i><sub>1</sub> is 6 × 256, <i>W</i><sub>2</sub> and <i>W</i><sub>3</sub> are 256 × 256, <i>W</i><sub>4</sub> is 256 × 19, and tanh acts element by element. The parameters θ = {<i>W</i><sub>1</sub>, <i>b</i><sub>1</sub>, …, <i>W</i><sub>4</sub>, <i>b</i><sub>4</sub>} hold 138,259 numbers, and a forward pass costs about 275,000 floating-point operations per model (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L58"><code>jax_mlp.forward</code></a>).</p>
-
-      <h3>The loss</h3>
-      <div class="eq"><span><i>L</i>(θ) = (1/19<i>B</i>) Σ<sub><i>i</i></sub> Σ<sub><i>k</i></sub> (<i>Ŷ<sub>ik</sub></i> − <i>Y</i>′<sub><i>ik</i></sub>)² = ‖<i>Ŷ</i> − <i>Y</i>′‖²<sub>F</sub> / 19<i>B</i></span></div>
-      <p>If every standardized output carried independent Gaussian errors of unit variance, −log <i>p</i>(<i>Y</i>′ | θ) would equal (19<i>B</i>/2) <i>L</i>(θ) plus a constant, so minimizing <i>L</i> is maximum-likelihood estimation of θ (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L91"><code>jax_mlp.loss_fn</code></a>).</p>
-
-      <h3>Why the polynomial has a formula and the network does not</h3>
-      <p>The degree-5 polynomial predicts <i>Ŷ</i> = Φ<i>C</i>, where Φ is the <i>N</i> × 462 matrix of monomials of the inputs and <i>C</i> the 462 × 19 matrix of coefficients. The loss is quadratic in <i>C</i>, and setting its gradient to zero gives the normal equations</p>
-      <div class="eq"><span>Φ<sup>T</sup>Φ <i>C</i> = Φ<sup>T</sup><i>Y</i>′</span></div>
-      <p>which <code>numpy.linalg.lstsq</code> solves through the singular value decomposition Φ = <i>U</i>Σ<i>V</i><sup>T</sup>, as <i>C</i> = <i>V</i>Σ<sup>+</sup><i>U</i><sup>T</sup><i>Y</i>′, without forming Φ<sup>T</sup>Φ and squaring its condition number (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/baselines.py#L80"><code>baselines.fit_polynomial</code></a>). The network's output depends on <i>W</i><sub>1</sub>, <i>W</i><sub>2</sub> and <i>W</i><sub>3</sub> through the tanh, so <i>L</i>(θ) is neither quadratic nor convex and has no such formula, and the minimum has to be found by following the gradient downhill.</p>
-
-      <h3>Backpropagation</h3>
-      <p>Take one layer, <i>Z</i> = <i>AW</i> + 𝟙<i>b</i><sup>T</sup>, and write Δ = ∂<i>L</i>/∂<i>Z</i> for the gradient of the loss with respect to the layer's values before the tanh. In index notation <i>Z<sub>ij</sub></i> = Σ<sub><i>k</i></sub> <i>A<sub>ik</sub></i> <i>W<sub>kj</sub></i> + <i>b<sub>j</sub></i>, so the chain rule gives</p>
-      <div class="eq">
-        <span>∂<i>L</i>/∂<i>W<sub>kj</sub></i> = Σ<sub><i>i</i></sub> Δ<sub><i>ij</i></sub> <i>A<sub>ik</sub></i>, which in matrix form is ∂<i>L</i>/∂<i>W</i> = <i>A</i><sup>T</sup>Δ</span>
-        <span>∂<i>L</i>/∂<i>b<sub>j</sub></i> = Σ<sub><i>i</i></sub> Δ<sub><i>ij</i></sub>, the column sums of Δ</span>
-        <span>∂<i>L</i>/∂<i>A<sub>ik</sub></i> = Σ<sub><i>j</i></sub> Δ<sub><i>ij</i></sub> <i>W<sub>kj</sub></i>, which in matrix form is ∂<i>L</i>/∂<i>A</i> = Δ<i>W</i><sup>T</sup></span>
-      </div>
-      <p>The activation <i>A</i> = tanh(<i>Z</i>) acts element by element with derivative 1 − tanh²(<i>Z</i>) = 1 − <i>A</i>², so the gradient passes through it as ∂<i>L</i>/∂<i>Z</i> = (∂<i>L</i>/∂<i>A</i>) ⊙ (1 − <i>A</i>²), where ⊙ is the element-wise product. Starting at the loss and working back through the four layers:</p>
-      <div class="eq">
-        <span>Δ<sub>4</sub> = 2 (<i>Ŷ</i> − <i>Y</i>′) / 19<i>B</i></span>
-        <span>∂<i>L</i>/∂<i>W</i><sub>4</sub> = <i>A</i><sub>3</sub><sup>T</sup>Δ<sub>4</sub>,&nbsp;&nbsp; Δ<sub>3</sub> = (Δ<sub>4</sub><i>W</i><sub>4</sub><sup>T</sup>) ⊙ (1 − <i>A</i><sub>3</sub>²)</span>
-        <span>∂<i>L</i>/∂<i>W</i><sub>3</sub> = <i>A</i><sub>2</sub><sup>T</sup>Δ<sub>3</sub>,&nbsp;&nbsp; Δ<sub>2</sub> = (Δ<sub>3</sub><i>W</i><sub>3</sub><sup>T</sup>) ⊙ (1 − <i>A</i><sub>2</sub>²)</span>
-        <span>∂<i>L</i>/∂<i>W</i><sub>2</sub> = <i>A</i><sub>1</sub><sup>T</sup>Δ<sub>2</sub>,&nbsp;&nbsp; Δ<sub>1</sub> = (Δ<sub>2</sub><i>W</i><sub>2</sub><sup>T</sup>) ⊙ (1 − <i>A</i><sub>1</sub>²)</span>
-        <span>∂<i>L</i>/∂<i>W</i><sub>1</sub> = <i>X</i>′<sup>T</sup>Δ<sub>1</sub></span>
-      </div>
-      <p>Each layer needs two matrix products of the same size as its forward product, so the whole gradient costs about two forward passes, against two forward passes per parameter (276,518 per step) for finite differences. This is reverse-mode differentiation, the efficient direction when one scalar loss depends on many parameters. <a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/numpy_mlp.py#L168"><code>numpy_mlp.backward</code></a> writes these lines out by hand, and <code>jax.grad</code> builds the same products automatically from the forward code.</p>
-
-      <h3>Mini-batches</h3>
-      <p>The loss over the training set is the average of the per-model losses, so the gradient computed on a batch drawn uniformly at random is an unbiased estimate of the full gradient, with a variance that falls as 1/<i>B</i>. Batches of 1,024 models give 195 updates per pass through the 200,000 training models, where the full gradient would give one.</p>
-
-      <h3>Adam</h3>
-      <div class="eq">
-        <span><i>m<sub>t</sub></i> = β<sub>1</sub><i>m</i><sub><i>t</i>−1</sub> + (1 − β<sub>1</sub>) <i>g<sub>t</sub></i>,&nbsp;&nbsp; <i>v<sub>t</sub></i> = β<sub>2</sub><i>v</i><sub><i>t</i>−1</sub> + (1 − β<sub>2</sub>) <i>g<sub>t</sub></i>²</span>
-        <span><i>m̂<sub>t</sub></i> = <i>m<sub>t</sub></i> / (1 − β<sub>1</sub><sup><i>t</i></sup>),&nbsp;&nbsp; <i>v̂<sub>t</sub></i> = <i>v<sub>t</sub></i> / (1 − β<sub>2</sub><sup><i>t</i></sup>)</span>
-        <span>θ<sub><i>t</i></sub> = θ<sub><i>t</i>−1</sub> − η<sub><i>t</i></sub> <i>m̂<sub>t</sub></i> / (√<i>v̂<sub>t</sub></i> + ε)</span>
-      </div>
-      <p>Here <i>g<sub>t</sub></i> is the batch gradient at step <i>t</i>, every operation acts element by element, and β<sub>1</sub> = 0.9, β<sub>2</sub> = 0.999, ε = 10⁻⁸. The moving averages <i>m</i> and <i>v</i> of the gradient and its square remember about 1/(1 − β) steps, 10 and 1,000. Starting both at zero biases them low by a factor 1 − β<sup><i>t</i></sup> in the first steps, which the hats remove. The ratio <i>m̂</i>/√<i>v̂</i> is close to ±1 for a weight whose gradient keeps its sign and smaller for one whose gradient keeps flipping, so each weight moves by at most about η<sub><i>t</i></sub> per step whatever the scale of its gradient (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L145"><code>jax_mlp.adam_update</code></a>). The learning rate follows</p>
-      <div class="eq"><span>η(<i>e</i>) = η<sub>end</sub> + ½ (η<sub>start</sub> − η<sub>end</sub>) [1 + cos(π<i>e</i> / (<i>E</i> − 1))]</span></div>
-      <p>for epoch <i>e</i> out of <i>E</i> = 300, from η<sub>start</sub> = 10⁻³ to η<sub>end</sub> = 10⁻⁵ (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L220"><code>jax_mlp.cosine_learning_rate</code></a>).</p>
-
-      <h3>Initialization</h3>
-      <p>Each weight starts as an independent draw from a normal distribution with mean zero and variance 1/<i>n</i><sub>in</sub>, where <i>n</i><sub>in</sub> is the number of inputs to the layer, and each bias starts at zero (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/numpy_mlp.py#L49"><code>numpy_mlp.init_params</code></a>). A unit computes <i>z</i> = Σ<sub><i>k</i></sub> <i>a<sub>k</sub></i> <i>w<sub>k</sub></i> over <i>n</i><sub>in</sub> inputs, so Var(<i>z</i>) = <i>n</i><sub>in</sub> · (1/<i>n</i><sub>in</sub>) · E[<i>a</i>²] = E[<i>a</i>²], and the signal keeps its size from layer to layer instead of growing or shrinking geometrically with depth.</p>
-
-      <h3>The algorithm</h3>
-      <ol class="steps">
-        <li>Fit the transforms on the training set and apply them to all three sets.</li>
-        <li>Draw the starting weights.</li>
-        <li>For each of 300 epochs, shuffle the training models and cut them into 195 batches of 1,024. For each batch, run the forward pass, the loss, backpropagation and one Adam step with that epoch's learning rate, all inside one compiled function (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L256"><code>jax_mlp.make_train_step</code></a>).</li>
-        <li>After each epoch, compute the loss on the 25,000 validation models and keep the weights if that loss is the lowest so far.</li>
-        <li>Save the kept weights together with the transforms (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L444"><code>jax_mlp.save_emulator</code></a>).</li>
-      </ol>
-      <p>That makes 58,500 Adam steps, about four minutes on a laptop CPU (<a href="https://github.com/luiswel/emulators-from-scratch/blob/main/emulator/jax_mlp.py#L334"><code>jax_mlp.train</code></a>). Gradient descent on a non-convex loss carries no guarantee of reaching the global minimum, which is why the validation and test errors decide whether the emulator is good enough.</p>
     </section>
 
     <section id="glossary">
@@ -857,15 +1125,17 @@ log10_values = emulator.predict_log10(features)  # features: (n_layers, 6)</code
         <dt>dex</dt><dd>A difference in log10. 0.01 dex is 2.3%, 0.1 dex is 26%, 1 dex a factor of 10.</dd>
         <dt>Floor</dt><dd>The smallest value kept, with anything below it raised to it.</dd>
         <dt>Standardize</dt><dd>Subtract the mean and divide by the standard deviation.</dd>
+        <dt>Design matrix</dt><dd>The matrix Φ whose columns are the functions a linear model combines.</dd>
+        <dt>Condition number</dt><dd>κ = <i>s</i><sub>max</sub>/<i>s</i><sub>min</sub>, how much a linear system can amplify rounding errors.</dd>
         <dt>Epoch</dt><dd>One pass through the training set.</dd>
         <dt>Mini-batch</dt><dd>The models used for one gradient step.</dd>
-        <dt>Learning rate</dt><dd>The step size of the optimizer.</dd>
-        <dt>Loss</dt><dd>The number training minimizes, here the mean squared error of the standardized outputs.</dd>
+        <dt>Learning rate</dt><dd>The step size η of the optimizer.</dd>
         <dt>Activation</dt><dd>The nonlinear function in each hidden unit, here tanh.</dd>
-        <dt>Backpropagation</dt><dd>Computing the gradient of the loss layer by layer with the chain rule.</dd>
+        <dt>Backpropagation</dt><dd>Computing the gradient of the loss layer by layer with the chain rule, from the output back.</dd>
+        <dt>VJP</dt><dd>Vector–Jacobian product: the gradient with respect to an operation's inputs, given the gradient with respect to its output.</dd>
         <dt>Adam</dt><dd>Gradient descent with a separate, automatically scaled step size for every weight.</dd>
-        <dt>Overfitting</dt><dd>A training error well below the validation error, because the network memorizes the training set.</dd>
-        <dt>Underfitting</dt><dd>Both errors high, because the network is not flexible enough or not trained long enough.</dd>
+        <dt>Jacobian</dt><dd>The matrix of derivatives of every output with respect to every input.</dd>
+        <dt>Overfitting</dt><dd>A training error well below the validation error, because the network fits details of the training models that do not carry over.</dd>
         <dt>Latin hypercube</dt><dd>A sampling design that spreads points evenly along every input axis.</dd>
       </dl>
     </section>
@@ -905,7 +1175,6 @@ log10_values = emulator.predict_log10(features)  # features: (n_layers, 6)</code
         }
       });
     });
-
   })();
 </script>
 </body>
